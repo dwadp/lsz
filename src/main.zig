@@ -1,6 +1,27 @@
 const std = @import("std");
+const clap = @import("clap");
 const builtin = @import("builtin");
 const Io = std.Io;
+
+const helpText =
+    \\Usage: lsz [PATH] [OPTIONS]
+    \\
+    \\A minimal implementation of ls.
+    \\
+    \\Arguments:
+    \\  PATH             Directory to list (default: current directory)
+    \\
+    \\Options:
+    \\  -a, --all       List all files and do not ignore entries starting with .
+    \\  -l, --list      Use a long listing format
+    \\  -h, --help      Show this help message
+    \\
+    \\Examples:
+    \\  lsz
+    \\  lsz -a
+    \\  lsz -l
+    \\  lsz /path -l -a
+;
 
 var showLongListFormat = false;
 var showAll = false;
@@ -27,35 +48,58 @@ const Item = struct {
     groupName: [:0]const u8,
 };
 
+const mainParams = clap.parseParamsComptime(
+    \\-h, --help    Display this help and exit.
+    \\-l, --list    Use a long listing format
+    \\-a, --all     List all files and do not ignore entries starting with .
+    \\<str>
+    \\
+);
+
 pub fn main(init: std.process.Init) !void {
+    var iter = try init.minimal.args.iterateAllocator(init.gpa);
+    defer iter.deinit();
+
+    _ = iter.next();
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parseEx(clap.Help, &mainParams, clap.parsers.default, &iter, .{
+        .diagnostic = &diag,
+        .allocator = init.gpa,
+    }) catch |err| {
+        try diag.reportToFile(init.io, .stderr(), err);
+        return err;
+    };
+
+    defer res.deinit();
+
     const io = init.io;
     var arena = std.heap.ArenaAllocator.init(init.gpa);
     defer arena.deinit();
 
+    if (res.args.help == 1) {
+        std.debug.print("{s}\n", .{helpText});
+        return;
+    }
+
     const allocator = arena.allocator();
-    const args = try init.minimal.args.toSlice(allocator);
-    const path = if (args.len > 1 and !std.mem.startsWith(u8, args[1], "-")) args[1] else ".";
+    var path: []const u8 = "";
 
-    for (args, 0..) |arg, index| {
-        if (index == 0) continue;
-
-        if (std.mem.eql(u8, arg, "-l")) {
-            showLongListFormat = true;
-        }
-
-        if (std.mem.eql(u8, arg, "-a")) {
-            showAll = true;
-        }
+    if (res.positionals.len > 0) {
+        path = res.positionals[0] orelse ".";
     }
 
     const dir = try Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
     defer dir.close(io);
 
-    var iter = dir.iterate();
+    showAll = res.args.all == 1;
+    showLongListFormat = res.args.list == 1;
+
+    var dirIter = dir.iterate();
     var result = std.ArrayList(Item).empty;
     defer result.deinit(allocator);
 
-    while (try iter.next(io)) |content| {
+    while (try dirIter.next(io)) |content| {
         if (!showAll and std.mem.startsWith(u8, content.name, ".")) {
             continue;
         }
