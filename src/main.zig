@@ -104,12 +104,7 @@ pub fn main(init: std.process.Init) !void {
             continue;
         }
 
-        if (showLongListFormat) {
-            try collectLongListItem(allocator, dir, io, content, &result);
-            continue;
-        }
-
-        std.debug.print("{s} ", .{content.name});
+        try collectItem(allocator, dir, io, content, &result);
     }
 
     if (showLongListFormat) {
@@ -120,28 +115,38 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("{s:<11} {s} {s} {s} {s}\n", .{ "Permissions", sizeLabel, userLabel, groupLabel, "Name" });
     }
 
-    for (result.items) |item| {
-        var permission = [_]u8{'-'} ** 10;
+    for (result.items, 0..) |item, index| {
+        if (showLongListFormat) {
+            var permission = [_]u8{'-'} ** 10;
 
-        if (item.kind == .file) {
-            permission[0] = '.';
-        } else if (item.kind == .directory) {
-            permission[0] = 'd';
+            if (item.kind == .file) {
+                permission[0] = '.';
+            } else if (item.kind == .directory) {
+                permission[0] = 'd';
+            }
+
+            const sizeText = try formatLeftAligned(allocator, sizeLength, item.size);
+            const userText = try formatLeftAligned(allocator, userNameLength, item.userName);
+            const groupText = try formatLeftAligned(allocator, groupNameLength, item.groupName);
+
+            decodeModeDigit(permission[1..4], item.permission.owner);
+            decodeModeDigit(permission[4..7], item.permission.group);
+            decodeModeDigit(permission[7..10], item.permission.other);
+
+            std.debug.print("{s:<11} {s} {s} {s} {s}\n", .{ permission, sizeText, userText, groupText, item.name });
+        } else {
+            const lastItem = index == result.items.len - 1;
+
+            if (!lastItem) {
+                std.debug.print("{s} ", .{item.name});
+            } else {
+                std.debug.print("{s}\n", .{item.name});
+            }
         }
-
-        const sizeText = try formatLeftAligned(allocator, sizeLength, item.size);
-        const userText = try formatLeftAligned(allocator, userNameLength, item.userName);
-        const groupText = try formatLeftAligned(allocator, groupNameLength, item.groupName);
-
-        decodeModeDigit(permission[1..4], item.permission.owner);
-        decodeModeDigit(permission[4..7], item.permission.group);
-        decodeModeDigit(permission[7..10], item.permission.other);
-
-        std.debug.print("{s:<11} {s} {s} {s} {s}\n", .{ permission, sizeText, userText, groupText, item.name });
     }
 }
 
-fn collectLongListItem(allocator: std.mem.Allocator, dir: Io.Dir, io: Io, content: Io.Dir.Entry, result: *std.ArrayList(Item)) !void {
+fn collectItem(allocator: std.mem.Allocator, dir: Io.Dir, io: Io, content: Io.Dir.Entry, result: *std.ArrayList(Item)) !void {
     const stat = try dir.statFile(io, content.name, .{ .follow_symlinks = true });
     const file = try dir.openFile(io, content.name, .{});
     var userName: [:0]const u8 = "";
