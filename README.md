@@ -23,6 +23,8 @@ If `path` is not provided, `lsz` lists the current directory.
 
 ```
 lsz /path -l -a
+lsz /path -la
+lsz -la /path
 lsz
 lsz /path -l
 lsz /path -a
