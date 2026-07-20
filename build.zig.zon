@@ -6,6 +6,10 @@
             .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.12.0.tar.gz",
             .hash = "clap-0.12.0-oBajB7foAQDqlSwaSG5g0yq7xGbQARUsBk5T64gAOqP5",
         },
+        .zdt = .{
+            .url = "git+https://codeberg.org/FObersteiner/zdt?ref=v0.9.4#11d537ef9b6a35d9b77a6423aa259386c5d6709e",
+            .hash = "zdt-0.9.4-xr0_vELOEQCUrb17-jnp9GRJJzyq0s9CHGu7qBq8vypF",
+        },
     },
     .paths = .{""},
     .fingerprint = 0xa4e594154062012,

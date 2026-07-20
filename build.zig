@@ -29,6 +29,9 @@ pub fn build(b: *std.Build) void {
     const clap = b.dependency("clap", .{});
     exe.root_module.addImport("clap", clap.module("clap"));
 
+    const zdt = b.dependency("zdt", .{});
+    exe.root_module.addImport("zdt", zdt.module("zdt"));
+
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
     });
