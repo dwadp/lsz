@@ -230,8 +230,9 @@ fn runLongList(allocator: std.mem.Allocator, io: std.Io, contents: std.ArrayList
 fn collectItem(allocator: std.mem.Allocator, dir: Io.Dir, io: Io, content: Io.Dir.Entry, result: *std.ArrayList(Item)) !void {
     if (content.kind == .directory) {
         const subDir = try dir.openDir(io, content.name, .{ .iterate = false });
-        const subDirStat = try subDir.stat(io);
+        defer subDir.close(io);
 
+        const subDirStat = try subDir.stat(io);
         const permission = try collectOwnershipAndPermissions(subDir.handle, subDirStat);
 
         const item: Item = .{
@@ -246,7 +247,9 @@ fn collectItem(allocator: std.mem.Allocator, dir: Io.Dir, io: Io, content: Io.Di
         try result.append(allocator, item);
     } else if (content.kind == .file) {
         const stat = try dir.statFile(io, content.name, .{ .follow_symlinks = true });
+
         const file = try dir.openFile(io, content.name, .{ .follow_symlinks = false });
+        defer file.close(io);
 
         const permission = try collectOwnershipAndPermissions(file.handle, stat);
 
@@ -262,67 +265,43 @@ fn collectItem(allocator: std.mem.Allocator, dir: Io.Dir, io: Io, content: Io.Di
         try result.append(allocator, item);
     } else if (content.kind == .sym_link) {
         var buffer: [std.fs.max_path_bytes]u8 = undefined;
-        var permission: ?Permission = null;
         const readBytes = try dir.readLink(io, content.name, &buffer);
 
         const targetLinkName = try allocator.alloc(u8, readBytes);
         @memcpy(targetLinkName, buffer[0..readBytes]);
 
         const stat = try dir.statFile(io, content.name, .{ .follow_symlinks = false });
-        if (stat.kind == .file or stat.kind == .sym_link) {
-            const file = dir.openFile(io, targetLinkName, .{ .follow_symlinks = false }) catch |err| {
-                if (err == error.FileNotFound) {
-                    try result.append(allocator, .{
-                        .kind = stat.kind,
-                        .permission = .{
-                            .owner = 0,
-                            .group = 0,
-                            .other = 0,
-                            .userName = "???",
-                            .groupName = "???",
-                        },
-                        .name = content.name,
-                        .targetLinkName = targetLinkName,
-                        .size = stat.size,
-                        .modifiedTimestamp = stat.mtime,
-                        .createdTimestamp = stat.ctime,
-                    });
+        const file = dir.openFile(io, targetLinkName, .{ .follow_symlinks = false }) catch |err| {
+            if (err == error.FileNotFound) {
+                try result.append(allocator, .{
+                    .kind = stat.kind,
+                    .permission = .{
+                        .owner = 0,
+                        .group = 0,
+                        .other = 0,
+                        .userName = "???",
+                        .groupName = "???",
+                    },
+                    .name = content.name,
+                    .targetLinkName = targetLinkName,
+                    .size = stat.size,
+                    .modifiedTimestamp = stat.mtime,
+                    .createdTimestamp = stat.ctime,
+                });
 
-                    return;
-                }
+                return;
+            }
 
-                return err;
-            };
+            return err;
+        };
 
-            permission = try collectOwnershipAndPermissions(file.handle, stat);
-        } else if (stat.kind == .directory) {
-            std.log.err("not implemented yet!\n", .{});
-            unreachable;
-        }
+        defer file.close(io);
 
-        var owner: u32 = 0;
-        var group: u32 = 0;
-        var other: u32 = 0;
-        var userName: []const u8 = "";
-        var groupName: []const u8 = "";
-
-        if (permission) |p| {
-            owner = p.owner;
-            group = p.group;
-            other = p.other;
-            userName = p.userName;
-            groupName = p.groupName;
-        }
+        const permission = try collectOwnershipAndPermissions(file.handle, stat);
 
         const item: Item = .{
             .kind = stat.kind,
-            .permission = .{
-                .owner = owner,
-                .group = group,
-                .other = other,
-                .userName = userName,
-                .groupName = groupName,
-            },
+            .permission = permission,
             .name = content.name,
             .targetLinkName = targetLinkName,
             .size = stat.size,
