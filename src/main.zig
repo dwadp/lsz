@@ -2,6 +2,7 @@ const std = @import("std");
 const clap = @import("clap");
 const zdt = @import("zdt");
 const builtin = @import("builtin");
+const stat = @import("stat.zig");
 const Io = std.Io;
 
 const helpText =
@@ -47,10 +48,11 @@ const Item = struct {
     kind: Io.File.Kind,
     size: usize,
     permission: Permission,
-    createdTimestamp: Io.Timestamp,
-    modifiedTimestamp: Io.Timestamp,
+    created_timestamp: ?Io.Timestamp,
+    modified_timestamp: ?Io.Timestamp,
+    accessed_timestamp: ?Io.Timestamp,
     name: []const u8,
-    targetLinkName: ?[]const u8 = null,
+    target_link_name: ?[]const u8 = null,
 };
 
 const mainParams = clap.parseParamsComptime(
@@ -189,8 +191,13 @@ fn runLongList(allocator: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer,
         defer dateCreatedBuf.deinit(allocator);
         defer dateModifiedBuf.deinit(allocator);
 
-        dateCreated = try convertTimestampToString(allocator, io, &dateCreatedBuf, @intCast(item.createdTimestamp.toSeconds()));
-        dateModified = try convertTimestampToString(allocator, io, &dateModifiedBuf, @intCast(item.modifiedTimestamp.toSeconds()));
+        if (item.created_timestamp) |created_timestamp| {
+            dateCreated = try convertTimestampToString(allocator, io, &dateCreatedBuf, @intCast(created_timestamp.toSeconds()));
+        }
+
+        if (item.modified_timestamp) |modified_timestamp| {
+            dateModified = try convertTimestampToString(allocator, io, &dateModifiedBuf, @intCast(modified_timestamp.toSeconds()));
+        }
 
         if (dateCreated.len > dateCreatedLength) {
             dateCreatedLength = dateCreated.len + 2; // add more padding for clarity
@@ -237,7 +244,7 @@ fn runLongList(allocator: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer,
 
         var itemName = item.name;
 
-        if (item.targetLinkName) |targetName| {
+        if (item.target_link_name) |targetName| {
             itemName = try std.fmt.allocPrint(allocator, "{s} -> {s}", .{ item.name, targetName });
         }
 
@@ -261,138 +268,44 @@ fn runLongList(allocator: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer,
 }
 
 fn collectItem(allocator: std.mem.Allocator, dir: Io.Dir, io: Io, content: Io.Dir.Entry, result: *std.ArrayList(Item)) !void {
-    if (content.kind == .directory) {
-        const subDir = try dir.openDir(io, content.name, .{ .iterate = false });
-        defer subDir.close(io);
+    const name_z = try allocator.dupeZ(u8, content.name);
+    const name = try allocator.dupe(u8, content.name);
 
-        const subDirStat = try subDir.stat(io);
-        const permission = try collectOwnershipAndPermissions(subDir.handle, subDirStat);
+    var target_link_name: ?[]const u8 = null;
 
-        const item: Item = .{
-            .kind = .directory,
-            .permission = permission,
-            .name = content.name,
-            .size = subDirStat.size,
-            .modifiedTimestamp = subDirStat.mtime,
-            .createdTimestamp = subDirStat.ctime,
-        };
-
-        try result.append(allocator, item);
-    } else if (content.kind == .file) {
-        const stat = try dir.statFile(io, content.name, .{ .follow_symlinks = true });
-
-        const file = try dir.openFile(io, content.name, .{ .follow_symlinks = false });
-        defer file.close(io);
-
-        const permission = try collectOwnershipAndPermissions(file.handle, stat);
-
-        const item: Item = .{
-            .kind = stat.kind,
-            .permission = permission,
-            .name = content.name,
-            .size = stat.size,
-            .modifiedTimestamp = stat.mtime,
-            .createdTimestamp = stat.ctime,
-        };
-
-        try result.append(allocator, item);
-    } else if (content.kind == .sym_link) {
+    if (content.kind == .sym_link) {
         var buffer: [std.fs.max_path_bytes]u8 = undefined;
-        const readBytes = try dir.readLink(io, content.name, &buffer);
-
-        const targetLinkName = try allocator.alloc(u8, readBytes);
-        @memcpy(targetLinkName, buffer[0..readBytes]);
-
-        const stat = try dir.statFile(io, content.name, .{ .follow_symlinks = false });
-        const file = dir.openFile(io, targetLinkName, .{ .follow_symlinks = false }) catch |err| {
-            if (err == error.FileNotFound) {
-                try result.append(allocator, .{
-                    .kind = stat.kind,
-                    .permission = .{
-                        .owner = 0,
-                        .group = 0,
-                        .other = 0,
-                        .userName = "???",
-                        .groupName = "???",
-                    },
-                    .name = content.name,
-                    .targetLinkName = targetLinkName,
-                    .size = stat.size,
-                    .modifiedTimestamp = stat.mtime,
-                    .createdTimestamp = stat.ctime,
-                });
-
-                return;
-            }
-
-            return err;
+        const read_bytes = dir.readLink(io, content.name, &buffer) catch |err| blk: {
+            std.log.warn("failed to read symlink target for {s}: {s}", .{ content.name, @errorName(err) });
+            break :blk 0;
         };
 
-        defer file.close(io);
-
-        const permission = try collectOwnershipAndPermissions(file.handle, stat);
-
-        const item: Item = .{
-            .kind = stat.kind,
-            .permission = permission,
-            .name = content.name,
-            .targetLinkName = targetLinkName,
-            .size = stat.size,
-            .modifiedTimestamp = stat.mtime,
-            .createdTimestamp = stat.ctime,
-        };
-
-        try result.append(allocator, item);
+        if (read_bytes > 0) {
+            target_link_name = try allocator.dupe(u8, buffer[0..read_bytes]);
+        }
     }
-}
 
-fn collectOwnershipAndPermissions(fileHandle: i32, stat: Io.File.Stat) !Permission {
-    var userName: [:0]const u8 = "";
-    var groupName: [:0]const u8 = "";
+    const raw_stat = try stat.statEntry(dir.handle, name_z);
+    const owner_group_names = try stat.resolveOwnerGroupNames(allocator, raw_stat.uid, raw_stat.gid);
 
-    switch (builtin.os.tag) {
-        .macos => {
-            var cStat: std.c.Stat = undefined;
-            const fstat = std.c.fstat(fileHandle, &cStat);
-            const errno = std.c.errno(fstat);
-
-            if (errno != .SUCCESS) {
-                switch (errno) {
-                    .FAULT => std.debug.print("Bad addresses: {any}", .{errno}),
-                    else => std.debug.print("Unknown error: {any}", .{errno}),
-                }
-            } else {
-                const uid = std.c.getpwuid(cStat.uid);
-                const gid = std.c.getgrgid(cStat.gid);
-
-                if (uid) |user| {
-                    userName = std.mem.span(user.name orelse "");
-                }
-
-                if (gid) |group| {
-                    groupName = std.mem.span(group.name orelse "");
-                }
-            }
+    const item: Item = .{
+        .kind = raw_stat.kind,
+        .permission = .{
+            .owner = raw_stat.mode_bits.owner,
+            .group = raw_stat.mode_bits.group,
+            .other = raw_stat.mode_bits.owner,
+            .userName = owner_group_names.user_name,
+            .groupName = owner_group_names.group_name,
         },
-        .linux => return PlatformError.UnsupportedPlatform,
-        .windows => return PlatformError.UnsupportedPlatform,
-        else => return PlatformError.UnsupportedPlatform,
-    }
-
-    const mode = stat.permissions.toMode();
-    const owner = (mode >> 6) & 0o7;
-    const group = (mode >> 3) & 0o7;
-    const other = mode & 0o7;
-
-    const permission: Permission = .{
-        .owner = owner,
-        .group = group,
-        .other = other,
-        .userName = userName[0..],
-        .groupName = groupName[0..],
+        .name = name,
+        .target_link_name = target_link_name,
+        .size = raw_stat.size,
+        .modified_timestamp = raw_stat.modified,
+        .created_timestamp = raw_stat.created,
+        .accessed_timestamp = raw_stat.accessed,
     };
 
-    return permission;
+    try result.append(allocator, item);
 }
 
 fn decodeModeDigit(slots: []u8, mode: u32) void {
