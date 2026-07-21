@@ -63,7 +63,19 @@ const mainParams = clap.parseParamsComptime(
 );
 
 pub fn main(init: std.process.Init) !void {
-    var iter = try init.minimal.args.iterateAllocator(init.gpa);
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_impl = Io.File.stdout().writer(init.io, &stdout_buffer);
+    const stdout = &stdout_impl.interface;
+
+    var stderr_buffer: [1024]u8 = undefined;
+    var stderr_impl = Io.File.stderr().writer(init.io, &stderr_buffer);
+    const stderr = &stderr_impl.interface;
+
+    var iter = init.minimal.args.iterateAllocator(init.gpa) catch |err| {
+        std.log.warn("failed to create iterate allocator: {}\n", .{err});
+        return err;
+    };
+
     defer iter.deinit();
 
     _ = iter.next();
@@ -84,7 +96,16 @@ pub fn main(init: std.process.Init) !void {
     defer arena.deinit();
 
     if (res.args.help == 1) {
-        std.debug.print("{s}\n", .{helpText});
+        stdout.print("{s}\n", .{helpText}) catch |err| {
+            std.log.warn("failed to print help text: {}\n", .{err});
+            return err;
+        };
+
+        stdout.flush() catch |err| {
+            std.log.warn("failed to flush stdout: {}\n", .{err});
+            return err;
+        };
+
         return;
     }
 
@@ -98,18 +119,27 @@ pub fn main(init: std.process.Init) !void {
     showAll = res.args.all == 1;
     showLongListFormat = res.args.list == 1;
 
-    try run(allocator, io, path);
+    run(allocator, io, &stdout_impl.interface, path) catch |err| switch (err) {
+        error.FileNotFound => {
+            stderr.print("No such file or directory: {s}\n", .{path}) catch {};
+            stderr.flush() catch {};
+            std.process.exit(1);
+        },
+        else => return err,
+    };
 }
 
-fn run(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !void {
+fn run(allocator: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []const u8) !void {
     var dir = Io.Dir.cwd();
 
     if (path.len == 0) {
         dir = try Io.Dir.cwd().openDir(io, ".", .{ .iterate = true });
     } else if (std.mem.eql(u8, path, ".") or std.mem.startsWith(u8, path, ".")) {
         dir = try Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
-    } else {
+    } else if (std.fs.path.isAbsolute(path)) {
         dir = try Io.Dir.openDirAbsolute(io, path, .{ .iterate = true });
+    } else {
+        dir = try Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
     }
 
     defer dir.close(io);
@@ -128,25 +158,26 @@ fn run(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !void {
     }
 
     if (showLongListFormat) {
-        try runLongList(allocator, io, contents);
+        try runLongList(allocator, io, writer, contents);
     } else {
-        try runPlain(contents);
+        try runPlain(writer, contents);
+        try writer.flush();
     }
 }
 
-fn runPlain(contents: std.ArrayList(Item)) !void {
+fn runPlain(writer: *std.Io.Writer, contents: std.ArrayList(Item)) !void {
     for (contents.items, 0..) |item, index| {
         const lastItem = index == contents.items.len - 1;
 
         if (!lastItem) {
-            std.debug.print("{s} ", .{item.name});
+            try writer.print("{s} ", .{item.name});
         } else {
-            std.debug.print("{s}\n", .{item.name});
+            try writer.print("{s}\n", .{item.name});
         }
     }
 }
 
-fn runLongList(allocator: std.mem.Allocator, io: std.Io, contents: std.ArrayList(Item)) !void {
+fn runLongList(allocator: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, contents: std.ArrayList(Item)) !void {
     var itemList = std.ArrayList([]u8).empty;
 
     for (contents.items) |item| {
@@ -220,11 +251,13 @@ fn runLongList(allocator: std.mem.Allocator, io: std.Io, contents: std.ArrayList
     const dateCreatedLabel = try formatLeftAligned(allocator, dateCreatedLength, "Date Created");
     const dateModifiedLabel = try formatLeftAligned(allocator, dateModifiedLength, "Date Modified");
 
-    std.debug.print("{s:<13} {s} {s} {s} {s} {s} {s}\n", .{ "Permissions", sizeLabel, userLabel, groupLabel, dateCreatedLabel, dateModifiedLabel, "Name" });
+    try writer.print("{s:<13} {s} {s} {s} {s} {s} {s}\n", .{ "Permissions", sizeLabel, userLabel, groupLabel, dateCreatedLabel, dateModifiedLabel, "Name" });
 
     for (itemList.items) |item| {
-        std.debug.print("{s}\n", .{item});
+        try writer.print("{s}\n", .{item});
     }
+
+    try writer.flush();
 }
 
 fn collectItem(allocator: std.mem.Allocator, dir: Io.Dir, io: Io, content: Io.Dir.Entry, result: *std.ArrayList(Item)) !void {
