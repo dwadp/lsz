@@ -5,7 +5,7 @@ const builtin = @import("builtin");
 const stat = @import("stat.zig");
 const Io = std.Io;
 
-const helpText =
+const help_text =
     \\Usage: lsz [PATH] [OPTIONS]
     \\
     \\A very minimal implementation of ls.
@@ -25,14 +25,14 @@ const helpText =
     \\  lsz /path -l -a
 ;
 
-var showLongListFormat = false;
-var showAll = false;
+var show_long_list_format = false;
+var show_all = false;
 
-var sizeLength: usize = 6;
-var userNameLength: usize = 0;
-var groupNameLength: usize = 0;
-var dateCreatedLength: usize = 12;
-var dateModifiedLength: usize = 13;
+var size_length: usize = 6;
+var user_name_length: usize = 0;
+var group_name_length: usize = 0;
+var date_created_length: usize = 12;
+var date_modified_length: usize = 13;
 
 const PlatformError = error{UnsupportedPlatform};
 
@@ -55,7 +55,7 @@ const Item = struct {
     target_link_name: ?[]const u8 = null,
 };
 
-const mainParams = clap.parseParamsComptime(
+const main_params = clap.parseParamsComptime(
     \\--help        Display this help and exit.
     \\-l, --list    Use a long listing format
     \\-a, --all     List all files and do not ignore entries starting with .
@@ -83,7 +83,7 @@ pub fn main(init: std.process.Init) !void {
     _ = iter.next();
 
     var diag = clap.Diagnostic{};
-    var res = clap.parseEx(clap.Help, &mainParams, clap.parsers.default, &iter, .{
+    var res = clap.parseEx(clap.Help, &main_params, clap.parsers.default, &iter, .{
         .diagnostic = &diag,
         .allocator = init.gpa,
     }) catch |err| {
@@ -98,7 +98,7 @@ pub fn main(init: std.process.Init) !void {
     defer arena.deinit();
 
     if (res.args.help == 1) {
-        stdout.print("{s}\n", .{helpText}) catch |err| {
+        stdout.print("{s}\n", .{help_text}) catch |err| {
             std.log.warn("failed to print help text: {}\n", .{err});
             return err;
         };
@@ -118,8 +118,8 @@ pub fn main(init: std.process.Init) !void {
         path = res.positionals[0] orelse ".";
     }
 
-    showAll = res.args.all == 1;
-    showLongListFormat = res.args.list == 1;
+    show_all = res.args.all == 1;
+    show_long_list_format = res.args.list == 1;
 
     run(allocator, io, &stdout_impl.interface, path) catch |err| switch (err) {
         error.FileNotFound => {
@@ -131,7 +131,7 @@ pub fn main(init: std.process.Init) !void {
     };
 }
 
-fn run(allocator: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []const u8) !void {
+fn run(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []const u8) !void {
     var dir = Io.Dir.cwd();
 
     if (path.len == 0) {
@@ -148,30 +148,30 @@ fn run(allocator: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: [
 
     var iterator = dir.iterate();
 
-    var contents = std.ArrayList(Item).empty;
-    defer contents.deinit(allocator);
+    var items = std.ArrayList(Item).empty;
+    defer items.deinit(alloc);
 
-    while (try iterator.next(io)) |content| {
-        if (!showAll and std.mem.startsWith(u8, content.name, ".")) {
+    while (try iterator.next(io)) |entry| {
+        if (!show_all and std.mem.startsWith(u8, entry.name, ".")) {
             continue;
         }
 
-        try collectItem(allocator, dir, io, content, &contents);
+        try collectItem(alloc, dir, io, entry, &items);
     }
 
-    if (showLongListFormat) {
-        try runLongList(allocator, io, writer, contents);
+    if (show_long_list_format) {
+        try runLongList(alloc, io, writer, items);
     } else {
-        try runPlain(writer, contents);
+        try runPlain(writer, items);
         try writer.flush();
     }
 }
 
-fn runPlain(writer: *std.Io.Writer, contents: std.ArrayList(Item)) !void {
-    for (contents.items, 0..) |item, index| {
-        const lastItem = index == contents.items.len - 1;
+fn runPlain(writer: *std.Io.Writer, items: std.ArrayList(Item)) !void {
+    for (items.items, 0..) |item, index| {
+        const last_item = index == items.items.len - 1;
 
-        if (!lastItem) {
+        if (!last_item) {
             try writer.print("{s} ", .{item.name});
         } else {
             try writer.print("{s}\n", .{item.name});
@@ -179,32 +179,32 @@ fn runPlain(writer: *std.Io.Writer, contents: std.ArrayList(Item)) !void {
     }
 }
 
-fn runLongList(allocator: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, contents: std.ArrayList(Item)) !void {
-    var itemList = std.ArrayList([]u8).empty;
+fn runLongList(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, items: std.ArrayList(Item)) !void {
+    var item_list = std.ArrayList([]u8).empty;
 
-    for (contents.items) |item| {
-        var dateCreatedBuf: std.ArrayList(u8) = .empty;
-        var dateModifiedBuf: std.ArrayList(u8) = .empty;
-        var dateCreated: []u8 = "";
-        var dateModified: []u8 = "";
+    for (items.items) |item| {
+        var date_created_buf: std.ArrayList(u8) = .empty;
+        var date_modified_buf: std.ArrayList(u8) = .empty;
+        var date_created: []u8 = "";
+        var date_modified: []u8 = "";
 
-        defer dateCreatedBuf.deinit(allocator);
-        defer dateModifiedBuf.deinit(allocator);
+        defer date_created_buf.deinit(alloc);
+        defer date_modified_buf.deinit(alloc);
 
         if (item.created_timestamp) |created_timestamp| {
-            dateCreated = try convertTimestampToString(allocator, io, &dateCreatedBuf, @intCast(created_timestamp.toSeconds()));
+            date_created = try convertTimestampToString(alloc, io, &date_created_buf, @intCast(created_timestamp.toSeconds()));
         }
 
         if (item.modified_timestamp) |modified_timestamp| {
-            dateModified = try convertTimestampToString(allocator, io, &dateModifiedBuf, @intCast(modified_timestamp.toSeconds()));
+            date_modified = try convertTimestampToString(alloc, io, &date_modified_buf, @intCast(modified_timestamp.toSeconds()));
         }
 
-        if (dateCreated.len > dateCreatedLength) {
-            dateCreatedLength = dateCreated.len + 2; // add more padding for clarity
+        if (date_created.len > date_created_length) {
+            date_created_length = date_created.len + 2; // add more padding for clarity
         }
 
-        if (dateModified.len > dateModifiedLength) {
-            dateModifiedLength = dateModified.len + 2; // add more padding for clarity
+        if (date_modified.len > date_modified_length) {
+            date_modified_length = date_modified.len + 2; // add more padding for clarity
         }
 
         var permission = [_]u8{'-'} ** 10;
@@ -219,74 +219,74 @@ fn runLongList(allocator: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer,
             permission[0] = 's';
         }
 
-        if (sizeLength < countDigitsLog(@intCast(item.size))) {
-            sizeLength = countDigitsLog(@intCast(item.size)) + 2;
+        if (size_length < countDigitsLog(@intCast(item.size))) {
+            size_length = countDigitsLog(@intCast(item.size)) + 2;
         }
 
-        if (userNameLength < item.permission.userName.len) {
-            userNameLength = item.permission.userName.len + 2;
+        if (user_name_length < item.permission.userName.len) {
+            user_name_length = item.permission.userName.len + 2;
         }
 
-        if (groupNameLength < item.permission.groupName.len) {
-            groupNameLength = item.permission.groupName.len + 2;
+        if (group_name_length < item.permission.groupName.len) {
+            group_name_length = item.permission.groupName.len + 2;
         }
 
-        const sizeText = try formatLeftAligned(allocator, sizeLength, item.size);
-        const userText = try formatLeftAligned(allocator, userNameLength, item.permission.userName);
-        const groupText = try formatLeftAligned(allocator, groupNameLength, item.permission.groupName);
+        const size_text = try formatLeftAligned(alloc, size_length, item.size);
+        const user_text = try formatLeftAligned(alloc, user_name_length, item.permission.userName);
+        const group_text = try formatLeftAligned(alloc, group_name_length, item.permission.groupName);
 
         decodeModeDigit(permission[1..4], item.permission.owner);
         decodeModeDigit(permission[4..7], item.permission.group);
         decodeModeDigit(permission[7..10], item.permission.other);
 
-        dateCreated = try formatLeftAligned(allocator, dateCreatedLength, dateCreated);
-        dateModified = try formatLeftAligned(allocator, dateModifiedLength, dateModified);
+        date_created = try formatLeftAligned(alloc, date_created_length, date_created);
+        date_modified = try formatLeftAligned(alloc, date_modified_length, date_modified);
 
-        var itemName = item.name;
+        var item_name = item.name;
 
         if (item.target_link_name) |targetName| {
-            itemName = try std.fmt.allocPrint(allocator, "{s} -> {s}", .{ item.name, targetName });
+            item_name = try std.fmt.allocPrint(alloc, "{s} -> {s}", .{ item.name, targetName });
         }
 
-        const list = try std.fmt.allocPrint(allocator, "{s:<13} {s} {s} {s} {s} {s} {s}", .{ permission, sizeText, userText, groupText, dateCreated, dateModified, itemName });
-        try itemList.append(allocator, list);
+        const list = try std.fmt.allocPrint(alloc, "{s:<13} {s} {s} {s} {s} {s} {s}", .{ permission, size_text, user_text, group_text, date_created, date_modified, item_name });
+        try item_list.append(alloc, list);
     }
 
-    const sizeLabel = try formatLeftAligned(allocator, sizeLength, "Size");
-    const userLabel = try formatLeftAligned(allocator, userNameLength, "User");
-    const groupLabel = try formatLeftAligned(allocator, groupNameLength, "Group");
-    const dateCreatedLabel = try formatLeftAligned(allocator, dateCreatedLength, "Date Created");
-    const dateModifiedLabel = try formatLeftAligned(allocator, dateModifiedLength, "Date Modified");
+    const size_label = try formatLeftAligned(alloc, size_length, "Size");
+    const user_label = try formatLeftAligned(alloc, user_name_length, "User");
+    const group_label = try formatLeftAligned(alloc, group_name_length, "Group");
+    const date_created_label = try formatLeftAligned(alloc, date_created_length, "Date Created");
+    const date_modified_label = try formatLeftAligned(alloc, date_modified_length, "Date Modified");
 
-    try writer.print("{s:<13} {s} {s} {s} {s} {s} {s}\n", .{ "Permissions", sizeLabel, userLabel, groupLabel, dateCreatedLabel, dateModifiedLabel, "Name" });
+    try writer.print("{s:<13} {s} {s} {s} {s} {s} {s}\n", .{ "Permissions", size_label, user_label, group_label, date_created_label, date_modified_label, "Name" });
 
-    for (itemList.items) |item| {
+    for (item_list.items) |item| {
         try writer.print("{s}\n", .{item});
     }
 
     try writer.flush();
 }
 
-fn collectItem(allocator: std.mem.Allocator, dir: Io.Dir, io: Io, content: Io.Dir.Entry, result: *std.ArrayList(Item)) !void {
-    const name_z = try allocator.dupeZ(u8, content.name);
-    const name = try allocator.dupe(u8, content.name);
+fn collectItem(alloc: std.mem.Allocator, dir: Io.Dir, io: Io, entry: Io.Dir.Entry, items: *std.ArrayList(Item)) !void {
+    const name_z = try alloc.dupeZ(u8, entry.name);
+    const name = try alloc.dupe(u8, entry.name);
 
     var target_link_name: ?[]const u8 = null;
 
-    if (content.kind == .sym_link) {
+    if (entry.kind == .sym_link) {
         var buffer: [std.fs.max_path_bytes]u8 = undefined;
-        const read_bytes = dir.readLink(io, content.name, &buffer) catch |err| blk: {
-            std.log.warn("failed to read symlink target for {s}: {s}", .{ content.name, @errorName(err) });
+        const read_bytes = dir.readLink(io, entry.name, &buffer) catch |err| blk: {
+            std.log.warn("failed to read symlink target for {s}: {s}", .{ entry.name, @errorName(err) });
             break :blk 0;
         };
 
         if (read_bytes > 0) {
-            target_link_name = try allocator.dupe(u8, buffer[0..read_bytes]);
+            target_link_name = try alloc.dupe(u8, buffer[0..read_bytes]);
         }
     }
 
     const raw_stat = try stat.statEntry(dir.handle, name_z);
-    const owner_group_names = try stat.resolveOwnerGroupNames(allocator, raw_stat.uid, raw_stat.gid);
+    const owner_group_names = try stat.resolveOwnerGroupNames(alloc, raw_stat.uid, raw_stat.gid);
 
     const item: Item = .{
         .kind = raw_stat.kind,
@@ -305,7 +305,7 @@ fn collectItem(allocator: std.mem.Allocator, dir: Io.Dir, io: Io, content: Io.Di
         .accessed_timestamp = raw_stat.accessed,
     };
 
-    try result.append(allocator, item);
+    try items.append(alloc, item);
 }
 
 fn decodeModeDigit(slots: []u8, mode: u32) void {
@@ -345,29 +345,30 @@ fn countDigitsLog(num: u32) u32 {
     return std.math.log10(num) + 1;
 }
 
-fn convertTimestampToString(allocator: std.mem.Allocator, io: std.Io, buf: *std.ArrayList(u8), unixEpochSeconds: u64) ![]u8 {
-    const unixEpoch = std.time.epoch.EpochSeconds{ .secs = unixEpochSeconds };
+// TODO:Still has bugs for the timezone. I'm still not able to make it timezone aware. I'll get to that later :)
+fn convertTimestampToString(alloc: std.mem.Allocator, io: std.Io, buf: *std.ArrayList(u8), unixEpochSeconds: u64) ![]u8 {
+    const unix_epoch = std.time.epoch.EpochSeconds{ .secs = unixEpochSeconds };
 
-    const epochDay = unixEpoch.getEpochDay();
-    const yearDay = epochDay.calculateYearDay();
-    const monthDay = yearDay.calculateMonthDay();
+    const epoch_day = unix_epoch.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
 
-    const daySeconds = unixEpoch.getDaySeconds();
+    const day_seconds = unix_epoch.getDaySeconds();
 
-    const year = yearDay.year;
-    const month = @intFromEnum(monthDay.month) + 1;
-    const day = monthDay.day_index + 1;
+    const year = year_day.year;
+    const month = @intFromEnum(month_day.month) + 1;
+    const day = month_day.day_index + 1;
 
-    const hour = daySeconds.getHoursIntoDay();
-    const minute = daySeconds.getMinutesIntoHour();
-    const second = daySeconds.getSecondsIntoMinute();
+    const hour = day_seconds.getHoursIntoDay();
+    const minute = day_seconds.getMinutesIntoHour();
+    const second = day_seconds.getSecondsIntoMinute();
 
-    var defaultTZ = try zdt.Timezone.tzLocal(io, allocator);
-    defer defaultTZ.deinit();
+    var default_tz = try zdt.Timezone.tzLocal(io, alloc);
+    defer default_tz.deinit();
 
-    var datetime = try zdt.Datetime.fromFields(.{ .year = @intCast(year), .month = month, .day = day, .hour = hour, .minute = minute, .second = second, .tz_options = .{ .tz = &defaultTZ } });
+    var datetime = try zdt.Datetime.fromFields(.{ .year = @intCast(year), .month = month, .day = day, .hour = hour, .minute = minute, .second = second, .tz_options = .{ .tz = &default_tz } });
 
-    var w: std.Io.Writer.Allocating = .fromArrayList(allocator, buf);
+    var w: std.Io.Writer.Allocating = .fromArrayList(alloc, buf);
     try datetime.toString("%d %:b %Y %H:%M:%S", &w.writer);
 
     const written = w.written();
@@ -375,12 +376,12 @@ fn convertTimestampToString(allocator: std.mem.Allocator, io: std.Io, buf: *std.
     return written;
 }
 
-fn formatLeftAligned(allocator: std.mem.Allocator, width: usize, value: anytype) ![]u8 {
-    const valueInfo = @typeInfo(@TypeOf(value));
+fn formatLeftAligned(alloc: std.mem.Allocator, width: usize, value: anytype) ![]u8 {
+    const value_info = @typeInfo(@TypeOf(value));
 
-    return switch (valueInfo) {
-        .int => try std.fmt.allocPrint(allocator, "{d: <[1]}", .{ value, width }),
-        .float => try std.fmt.allocPrint(allocator, "{f: <[1]}", .{ value, width }),
-        else => try std.fmt.allocPrint(allocator, "{s: <[1]}", .{ value, width }),
+    return switch (value_info) {
+        .int => try std.fmt.allocPrint(alloc, "{d: <[1]}", .{ value, width }),
+        .float => try std.fmt.allocPrint(alloc, "{f: <[1]}", .{ value, width }),
+        else => try std.fmt.allocPrint(alloc, "{s: <[1]}", .{ value, width }),
     };
 }
