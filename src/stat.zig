@@ -189,3 +189,25 @@ pub fn resolveOwnerGroupNames(alloc: std.mem.Allocator, uid: std.c.uid_t, gid: s
         else => error.UnsupportedPlatform,
     }
 }
+
+test "splitModeBits: extracts owner, group, other from full permission" {
+    const result = splitModeBits(@as(u32, 0o755));
+    try std.testing.expectEqual(@as(u3, 7), result.owner);
+    try std.testing.expectEqual(@as(u3, 5), result.group);
+    try std.testing.expectEqual(@as(u3, 5), result.other);
+}
+
+test "splitModeBits: handles zero permission" {
+    const result = splitModeBits(@as(u32, 0));
+    try std.testing.expectEqual(@as(u3, 0), result.owner);
+    try std.testing.expectEqual(@as(u3, 0), result.group);
+    try std.testing.expectEqual(@as(u3, 0), result.other);
+}
+
+test "splitModeBits: ignores file type bits above permission bits" {
+    // 0o120755 -> symlink (0o120000) with permission 755
+    const result = splitModeBits(@as(u32, 0o120755));
+    try std.testing.expectEqual(@as(u3, 7), result.owner);
+    try std.testing.expectEqual(@as(u3, 5), result.group);
+    try std.testing.expectEqual(@as(u3, 5), result.other);
+}
