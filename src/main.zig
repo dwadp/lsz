@@ -1,8 +1,9 @@
 const std = @import("std");
 const clap = @import("clap");
-const zdt = @import("zdt");
 const builtin = @import("builtin");
 const stat = @import("stat.zig");
+const tempora = @import("tempora");
+
 const Io = std.Io;
 
 const help_text =
@@ -27,12 +28,7 @@ const help_text =
 
 var show_long_list_format = false;
 var show_all = false;
-
-var size_length: usize = 6;
-var user_name_length: usize = 0;
-var group_name_length: usize = 0;
-var date_created_length: usize = 12;
-var date_modified_length: usize = 13;
+var show_human_readable = false;
 
 const PlatformError = error{UnsupportedPlatform};
 
@@ -120,6 +116,7 @@ pub fn main(init: std.process.Init) !void {
 
     show_all = res.args.all == 1;
     show_long_list_format = res.args.list == 1;
+    show_human_readable = res.args.human == 1;
 
     run(allocator, io, &stdout_impl.interface, path) catch |err| switch (err) {
         error.FileNotFound => {
@@ -185,23 +182,53 @@ fn runPlain(writer: *std.Io.Writer, items: std.ArrayList(Item)) !void {
 }
 
 fn runLongList(alloc: std.mem.Allocator, _: std.Io, writer: *std.Io.Writer, items: std.ArrayList(Item)) !void {
+    // Sizes declaration for formatting
+    var size_length: usize = 6;
+    var user_name_length: usize = 0;
+    var group_name_length: usize = 0;
+    var date_created_length: usize = 12;
+    var date_modified_length: usize = 13;
+
     var item_list = std.ArrayList([]u8).empty;
 
+    // TODO: figure out how to get timezone based on system
+    const timezone = tempora.Timezone.utc;
+
     for (items.items) |item| {
-        var date_created_buf: std.ArrayList(u8) = .empty;
         var date_modified_buf: std.ArrayList(u8) = .empty;
         var date_created: []const u8 = "";
         var date_modified: []const u8 = "";
 
-        defer date_created_buf.deinit(alloc);
         defer date_modified_buf.deinit(alloc);
 
         if (item.created_timestamp) |created_timestamp| {
-            date_created = try formatLeftAligned(alloc, date_created_length, created_timestamp.toSeconds());
+            if (show_human_readable) {
+                date_created = try formatTimestamHumanReadable(alloc, timezone, created_timestamp);
+                date_created = try formatLeftAligned(alloc, date_created.len + 2, date_created);
+            } else {
+                const miliseconds: u64 = @intCast(created_timestamp.toMilliseconds());
+                const digits = try countDigitsLog(miliseconds);
+                date_created = try formatLeftAligned(alloc, digits + 2, miliseconds);
+            }
+
+            if (date_created_length < date_created.len) {
+                date_created_length = date_created.len;
+            }
         }
 
         if (item.modified_timestamp) |modified_timestamp| {
-            date_modified = try formatLeftAligned(alloc, date_modified_length, modified_timestamp.toSeconds());
+            if (show_human_readable) {
+                date_modified = try formatTimestamHumanReadable(alloc, timezone, modified_timestamp);
+                date_modified = try formatLeftAligned(alloc, date_modified.len + 2, date_modified);
+            } else {
+                const miliseconds: u64 = @intCast(modified_timestamp.toMilliseconds());
+                const digits = try countDigitsLog(miliseconds);
+                date_modified = try formatLeftAligned(alloc, digits + 2, miliseconds);
+            }
+
+            if (date_modified_length < date_modified.len) {
+                date_modified_length = date_modified.len;
+            }
         }
 
         var permission = [_]u8{'-'} ** 10;
@@ -216,8 +243,9 @@ fn runLongList(alloc: std.mem.Allocator, _: std.Io, writer: *std.Io.Writer, item
             permission[0] = 's';
         }
 
-        if (size_length < countDigitsLog(@intCast(item.size))) {
-            size_length = countDigitsLog(@intCast(item.size)) + 2;
+        const size_digits = try countDigitsLog(item.size);
+        if (size_length < size_digits) {
+            size_length = @as(usize, size_digits) + 2;
         }
 
         if (user_name_length < item.permission.userName.len) {
@@ -242,6 +270,7 @@ fn runLongList(alloc: std.mem.Allocator, _: std.Io, writer: *std.Io.Writer, item
             item_name = try std.fmt.allocPrint(alloc, "{s} -> {s}", .{ item.name, targetName });
         }
 
+        // TODO: convert size to human readable format if specified
         const list = try std.fmt.allocPrint(alloc, "{s:<13} {s} {s} {s} {s} {s} {s}", .{ permission, size_text, user_text, group_text, date_created, date_modified, item_name });
         try item_list.append(alloc, list);
     }
@@ -334,40 +363,23 @@ fn decodeModeDigit(slots: []u8, mode: u32) void {
     }
 }
 
-fn countDigitsLog(num: u32) u32 {
-    if (num == 0) return 1;
-    return std.math.log10(num) + 1;
+fn countDigitsLog(num: anytype) !u64 {
+    const type_info = @typeInfo(@TypeOf(num));
+
+    switch (type_info) {
+        .int => {
+            if (num == 0) return 1;
+            return std.math.log10(num) + 1;
+        },
+        else => unreachable,
+    }
 }
 
-// TODO:Still has bugs for the timezone. I'm still not able to make it timezone aware. I'll get to that later :)
-fn convertTimestampToString(alloc: std.mem.Allocator, io: std.Io, buf: *std.ArrayList(u8), unixEpochSeconds: u64) ![]u8 {
-    const unix_epoch = std.time.epoch.EpochSeconds{ .secs = unixEpochSeconds };
+fn formatTimestamHumanReadable(alloc: std.mem.Allocator, timezone: tempora.Timezone, timestamp: std.Io.Timestamp) ![]u8 {
+    const date_time = tempora.Date_Time.With_Offset.from_timestamp(timestamp, &timezone);
+    const date_time_buf = try std.fmt.allocPrint(alloc, "{f}", .{date_time.fmt("DD MMM YYYY HH:mm:ss")});
 
-    const epoch_day = unix_epoch.getEpochDay();
-    const year_day = epoch_day.calculateYearDay();
-    const month_day = year_day.calculateMonthDay();
-
-    const day_seconds = unix_epoch.getDaySeconds();
-
-    const year = year_day.year;
-    const month = @intFromEnum(month_day.month) + 1;
-    const day = month_day.day_index + 1;
-
-    const hour = day_seconds.getHoursIntoDay();
-    const minute = day_seconds.getMinutesIntoHour();
-    const second = day_seconds.getSecondsIntoMinute();
-
-    var default_tz = try zdt.Timezone.tzLocal(io, alloc);
-    defer default_tz.deinit();
-
-    var datetime = try zdt.Datetime.fromFields(.{ .year = @intCast(year), .month = month, .day = day, .hour = hour, .minute = minute, .second = second, .tz_options = .{ .tz = &default_tz } });
-
-    var w: std.Io.Writer.Allocating = .fromArrayList(alloc, buf);
-    try datetime.toString("%d %:b %Y %H:%M:%S", &w.writer);
-
-    const written = w.written();
-
-    return written;
+    return date_time_buf;
 }
 
 fn formatLeftAligned(alloc: std.mem.Allocator, width: usize, value: anytype) ![]u8 {

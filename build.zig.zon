@@ -6,9 +6,9 @@
             .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.12.0.tar.gz",
             .hash = "clap-0.12.0-oBajB7foAQDqlSwaSG5g0yq7xGbQARUsBk5T64gAOqP5",
         },
-        .zdt = .{
-            .url = "git+https://codeberg.org/FObersteiner/zdt?ref=v0.9.4#11d537ef9b6a35d9b77a6423aa259386c5d6709e",
-            .hash = "zdt-0.9.4-xr0_vELOEQCUrb17-jnp9GRJJzyq0s9CHGu7qBq8vypF",
+        .tempora = .{
+            .url = "git+https://codeberg.org/bcrist/tempora#c635aa6f6cb239cb32b8d9a0f6e19f62f657adf4",
+            .hash = "tempora-0.6.3-GTyeDbelFgCdrUPGRMvWfO-5A69YWVTnimYJNpuGOOxw",
         },
     },
     .paths = .{""},
