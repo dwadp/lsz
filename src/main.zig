@@ -133,15 +133,20 @@ pub fn main(init: std.process.Init) !void {
 
 fn run(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []const u8) !void {
     var dir = Io.Dir.cwd();
+    var real_path: []const u8 = ".";
 
-    if (path.len == 0) {
-        dir = try Io.Dir.cwd().openDir(io, ".", .{ .iterate = true });
-    } else if (std.mem.eql(u8, path, ".") or std.mem.startsWith(u8, path, ".")) {
-        dir = try Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
-    } else if (std.fs.path.isAbsolute(path)) {
-        dir = try Io.Dir.openDirAbsolute(io, path, .{ .iterate = true });
-    } else {
-        dir = try Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
+    if (path.len >= 0) {
+        real_path = path;
+
+        dir = dir.openDir(io, real_path, .{ .iterate = true }) catch |err| blk: {
+            if (err == error.NotDir) {
+                if (std.fs.path.dirname(real_path)) |dirname| {
+                    break :blk try dir.openDir(io, dirname, .{ .iterate = true });
+                }
+            }
+
+            return err;
+        };
     }
 
     defer dir.close(io);
