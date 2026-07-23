@@ -42,7 +42,7 @@ const Permission = struct {
 
 const Item = struct {
     kind: Io.File.Kind,
-    size: usize,
+    size: u64,
     permission: Permission,
     created_timestamp: ?Io.Timestamp,
     modified_timestamp: ?Io.Timestamp,
@@ -182,12 +182,20 @@ fn runPlain(writer: *std.Io.Writer, items: std.ArrayList(Item)) !void {
 }
 
 fn runLongList(alloc: std.mem.Allocator, _: std.Io, writer: *std.Io.Writer, items: std.ArrayList(Item)) !void {
+    const permissions_label: []const u8 = "Permissions";
+    var size_label: []const u8 = "Size";
+    var user_name_label: []const u8 = "User";
+    var group_name_label: []const u8 = "Group";
+    var date_created_label: []const u8 = "Date Created";
+    var date_modified_label: []const u8 = "Date Modified";
+    const name_label: []const u8 = "Name";
+
     // Sizes declaration for formatting
-    var size_length: usize = 6;
+    var size_length: usize = size_label.len;
     var user_name_length: usize = 0;
     var group_name_length: usize = 0;
-    var date_created_length: usize = 12;
-    var date_modified_length: usize = 13;
+    var date_created_length: usize = date_created_label.len;
+    var date_modified_length: usize = date_modified_label.len;
 
     var item_list = std.ArrayList([]u8).empty;
 
@@ -204,11 +212,8 @@ fn runLongList(alloc: std.mem.Allocator, _: std.Io, writer: *std.Io.Writer, item
         if (item.created_timestamp) |created_timestamp| {
             if (show_human_readable) {
                 date_created = try formatTimestamHumanReadable(alloc, timezone, created_timestamp);
-                date_created = try formatLeftAligned(alloc, date_created.len + 2, date_created);
             } else {
-                const miliseconds: u64 = @intCast(created_timestamp.toMilliseconds());
-                const digits = try countDigitsLog(miliseconds);
-                date_created = try formatLeftAligned(alloc, digits + 2, miliseconds);
+                date_created = try std.fmt.allocPrint(alloc, "{d}", .{created_timestamp.toMilliseconds()});
             }
 
             if (date_created_length < date_created.len) {
@@ -219,11 +224,8 @@ fn runLongList(alloc: std.mem.Allocator, _: std.Io, writer: *std.Io.Writer, item
         if (item.modified_timestamp) |modified_timestamp| {
             if (show_human_readable) {
                 date_modified = try formatTimestamHumanReadable(alloc, timezone, modified_timestamp);
-                date_modified = try formatLeftAligned(alloc, date_modified.len + 2, date_modified);
             } else {
-                const miliseconds: u64 = @intCast(modified_timestamp.toMilliseconds());
-                const digits = try countDigitsLog(miliseconds);
-                date_modified = try formatLeftAligned(alloc, digits + 2, miliseconds);
+                date_modified = try std.fmt.allocPrint(alloc, "{d}", .{modified_timestamp.toMilliseconds()});
             }
 
             if (date_modified_length < date_modified.len) {
@@ -243,20 +245,20 @@ fn runLongList(alloc: std.mem.Allocator, _: std.Io, writer: *std.Io.Writer, item
             permission[0] = 's';
         }
 
-        const size_digits = try countDigitsLog(item.size);
-        if (size_length < size_digits) {
-            size_length = @as(usize, size_digits) + 2;
+        var size_text = try std.fmt.allocPrint(alloc, "{d}", .{item.size});
+        if (size_length < size_text.len) {
+            size_length = @as(usize, size_text.len);
         }
 
         if (user_name_length < item.permission.userName.len) {
-            user_name_length = item.permission.userName.len + 2;
+            user_name_length = item.permission.userName.len;
         }
 
         if (group_name_length < item.permission.groupName.len) {
-            group_name_length = item.permission.groupName.len + 2;
+            group_name_length = item.permission.groupName.len;
         }
 
-        const size_text = try formatLeftAligned(alloc, size_length, item.size);
+        size_text = try formatLeftAligned(alloc, size_length, size_text);
         const user_text = try formatLeftAligned(alloc, user_name_length, item.permission.userName);
         const group_text = try formatLeftAligned(alloc, group_name_length, item.permission.groupName);
 
@@ -270,18 +272,21 @@ fn runLongList(alloc: std.mem.Allocator, _: std.Io, writer: *std.Io.Writer, item
             item_name = try std.fmt.allocPrint(alloc, "{s} -> {s}", .{ item.name, targetName });
         }
 
+        date_created = try formatLeftAligned(alloc, date_created.len, date_created);
+        date_modified = try formatLeftAligned(alloc, date_modified.len, date_modified);
+
         // TODO: convert size to human readable format if specified
         const list = try std.fmt.allocPrint(alloc, "{s:<13} {s} {s} {s} {s} {s} {s}", .{ permission, size_text, user_text, group_text, date_created, date_modified, item_name });
         try item_list.append(alloc, list);
     }
 
-    const size_label = try formatLeftAligned(alloc, size_length, "Size");
-    const user_label = try formatLeftAligned(alloc, user_name_length, "User");
-    const group_label = try formatLeftAligned(alloc, group_name_length, "Group");
-    const date_created_label = try formatLeftAligned(alloc, date_created_length, "Date Created");
-    const date_modified_label = try formatLeftAligned(alloc, date_modified_length, "Date Modified");
+    size_label = try formatLeftAligned(alloc, size_length, size_label);
+    user_name_label = try formatLeftAligned(alloc, user_name_length, user_name_label);
+    group_name_label = try formatLeftAligned(alloc, group_name_length, group_name_label);
+    date_created_label = try formatLeftAligned(alloc, date_created_length, date_created_label);
+    date_modified_label = try formatLeftAligned(alloc, date_modified_length, date_modified_label);
 
-    try writer.print("{s:<13} {s} {s} {s} {s} {s} {s}\n", .{ "Permissions", size_label, user_label, group_label, date_created_label, date_modified_label, "Name" });
+    try writer.print("{s:<13} {s} {s} {s} {s} {s} {s}\n", .{ permissions_label, size_label, user_name_label, group_name_label, date_created_label, date_modified_label, name_label });
 
     for (item_list.items) |item| {
         try writer.print("{s}\n", .{item});
@@ -363,18 +368,6 @@ fn decodeModeDigit(slots: []u8, mode: u32) void {
     }
 }
 
-fn countDigitsLog(num: anytype) !u64 {
-    const type_info = @typeInfo(@TypeOf(num));
-
-    switch (type_info) {
-        .int => {
-            if (num == 0) return 1;
-            return std.math.log10(num) + 1;
-        },
-        else => unreachable,
-    }
-}
-
 fn formatTimestamHumanReadable(alloc: std.mem.Allocator, timezone: tempora.Timezone, timestamp: std.Io.Timestamp) ![]u8 {
     const date_time = tempora.Date_Time.With_Offset.from_timestamp(timestamp, &timezone);
     const date_time_buf = try std.fmt.allocPrint(alloc, "{f}", .{date_time.fmt("DD MMM YYYY HH:mm:ss")});
@@ -386,8 +379,8 @@ fn formatLeftAligned(alloc: std.mem.Allocator, width: usize, value: anytype) ![]
     const value_info = @typeInfo(@TypeOf(value));
 
     return switch (value_info) {
-        .int => try std.fmt.allocPrint(alloc, "{d: <[1]}", .{ value, width }),
-        .float => try std.fmt.allocPrint(alloc, "{f: <[1]}", .{ value, width }),
-        else => try std.fmt.allocPrint(alloc, "{s: <[1]}", .{ value, width }),
+        .int => try std.fmt.allocPrint(alloc, "{d:<[1]}", .{ value, width + 2 }),
+        .float => try std.fmt.allocPrint(alloc, "{f:<[1]}", .{ value, width + 2 }),
+        else => try std.fmt.allocPrint(alloc, "{s:<[1]}", .{ value, width + 2 }),
     };
 }

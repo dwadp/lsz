@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 
 pub const RawStat = struct {
     kind: std.Io.File.Kind,
-    size: usize,
+    size: u64,
     mode_bits: struct { owner: u3, group: u3, other: u3 },
     uid: u32,
     gid: u32,
@@ -45,6 +45,7 @@ fn statEntryMacos(dir_handle: i32, name_z: [:0]const u8) !RawStat {
     }
 
     const mode_bits = splitModeBits(c_stat_buf.mode);
+    const file_size = try toFileSize(c_stat_buf.size);
 
     return .{
         .mode_bits = .{
@@ -52,7 +53,7 @@ fn statEntryMacos(dir_handle: i32, name_z: [:0]const u8) !RawStat {
             .group = mode_bits.group,
             .other = mode_bits.other,
         },
-        .size = toFileSize(c_stat_buf.size),
+        .size = file_size,
         .uid = c_stat_buf.uid,
         .gid = c_stat_buf.gid,
         .kind = modeToKind(c_stat_buf.mode),
@@ -81,7 +82,7 @@ fn statEntryLinux(dir_handle: i32, name_z: [:0]const u8) !RawStat {
             .group = mode_bits.group,
             .other = mode_bits.other,
         },
-        .size = toFileSize(statx_buf.size),
+        .size = statx_buf.size,
         .uid = statx_buf.uid,
         .gid = statx_buf.gid,
         .kind = modeToKind(@as(u32, statx_buf.mode)),
@@ -110,15 +111,8 @@ pub fn splitModeBits(mode: u32) struct { owner: u3, group: u3, other: u3 } {
     };
 }
 
-fn toFileSize(size: anytype) usize {
-    const T = @TypeOf(size);
-    const info = @typeInfo(T).int;
-
-    if (info.signedness == .signed) {
-        std.debug.assert(size >= 0);
-    }
-
-    return @intCast(size);
+fn toFileSize(size: anytype) !u64 {
+    return std.math.cast(u64, size) orelse error.FileSizeOverflow;
 }
 
 fn timespecToTimestamp(ts: std.c.timespec) std.Io.Timestamp {
