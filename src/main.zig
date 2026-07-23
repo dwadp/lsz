@@ -184,32 +184,24 @@ fn runPlain(writer: *std.Io.Writer, items: std.ArrayList(Item)) !void {
     }
 }
 
-fn runLongList(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, items: std.ArrayList(Item)) !void {
+fn runLongList(alloc: std.mem.Allocator, _: std.Io, writer: *std.Io.Writer, items: std.ArrayList(Item)) !void {
     var item_list = std.ArrayList([]u8).empty;
 
     for (items.items) |item| {
         var date_created_buf: std.ArrayList(u8) = .empty;
         var date_modified_buf: std.ArrayList(u8) = .empty;
-        var date_created: []u8 = "";
-        var date_modified: []u8 = "";
+        var date_created: []const u8 = "";
+        var date_modified: []const u8 = "";
 
         defer date_created_buf.deinit(alloc);
         defer date_modified_buf.deinit(alloc);
 
         if (item.created_timestamp) |created_timestamp| {
-            date_created = try convertTimestampToString(alloc, io, &date_created_buf, @intCast(created_timestamp.toSeconds()));
+            date_created = try formatLeftAligned(alloc, date_created_length, created_timestamp.toSeconds());
         }
 
         if (item.modified_timestamp) |modified_timestamp| {
-            date_modified = try convertTimestampToString(alloc, io, &date_modified_buf, @intCast(modified_timestamp.toSeconds()));
-        }
-
-        if (date_created.len > date_created_length) {
-            date_created_length = date_created.len + 2; // add more padding for clarity
-        }
-
-        if (date_modified.len > date_modified_length) {
-            date_modified_length = date_modified.len + 2; // add more padding for clarity
+            date_modified = try formatLeftAligned(alloc, date_modified_length, modified_timestamp.toSeconds());
         }
 
         var permission = [_]u8{'-'} ** 10;
@@ -243,9 +235,6 @@ fn runLongList(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, ite
         decodeModeDigit(permission[1..4], item.permission.owner);
         decodeModeDigit(permission[4..7], item.permission.group);
         decodeModeDigit(permission[7..10], item.permission.other);
-
-        date_created = try formatLeftAligned(alloc, date_created_length, date_created);
-        date_modified = try formatLeftAligned(alloc, date_modified_length, date_modified);
 
         var item_name = item.name;
 
