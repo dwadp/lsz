@@ -70,7 +70,7 @@ pub const Entry = struct {
 
         const fields = std.EnumArray(EntryField, []const u8).init(.{
             .permission = try self.permission.render(alloc),
-            .size = try self.renderSize(alloc),
+            .size = try self.renderSize(alloc, human_readable),
             .user_name = self.permission.user_name,
             .group_name = self.permission.group_name,
             .created_timestamp = try renderDate(alloc, tz, self.created_timestamp, human_readable),
@@ -88,8 +88,8 @@ pub const Entry = struct {
             self.name;
     }
 
-    pub fn renderSize(self: @This(), alloc: std.mem.Allocator) ![]const u8 {
-        return try std.fmt.allocPrint(alloc, "{d}", .{self.size}); // TODO: convert to human readable if specified
+    pub fn renderSize(self: @This(), alloc: std.mem.Allocator, human_readable: bool) ![]const u8 {
+        return try renderFileSize(alloc, human_readable, self.size);
     }
 
     pub fn renderDate(alloc: std.mem.Allocator, tz: tempora.Timezone, timestamp: ?std.Io.Timestamp, human_readable: bool) ![]const u8 {
@@ -142,4 +142,85 @@ pub fn buildEntry(alloc: std.mem.Allocator, io: std.Io, dir: Io.Dir, name: []con
         .created_timestamp = raw_stat.created,
         .accessed_timestamp = raw_stat.accessed,
     };
+}
+
+fn renderFileSize(alloc: std.mem.Allocator, human_readable: bool, size: u64) ![]const u8 {
+    if (!human_readable) {
+        return try std.fmt.allocPrint(alloc, "{d}", .{size});
+    }
+
+    const size_units = [_][]const u8{ "K", "M", "G", "T", "P", "E" };
+    const base = 1024;
+
+    if (size < base) {
+        return try std.fmt.allocPrint(alloc, "{d}B", .{size});
+    }
+
+    var value: f64 = @as(f64, @floatFromInt(size)) / base;
+    var unit_index: usize = 0;
+
+    while (value >= base and unit_index < size_units.len - 1) {
+        value /= base;
+        unit_index += 1;
+    }
+
+    if (value >= 999.5 and unit_index < size_units.len - 1) {
+        value /= base;
+        unit_index += 1;
+    }
+
+    if (value < 10) {
+        return std.fmt.allocPrint(alloc, "{d:.1}{s}", .{ value, size_units[unit_index] });
+    }
+
+    return std.fmt.allocPrint(alloc, "{d:.0}{s}", .{ value, size_units[unit_index] });
+}
+
+fn expectHumanSize(size: u64, expected: []const u8) !void {
+    const alloc = std.testing.allocator;
+    const actual = try renderFileSize(alloc, true, size);
+
+    defer alloc.free(actual);
+
+    try std.testing.expectEqualStrings(expected, actual);
+}
+
+test "renderFileSize: byte range (below 1024, no unit division)" {
+    try expectHumanSize(0, "0B");
+    try expectHumanSize(900, "900B");
+    try expectHumanSize(1023, "1023B");
+    try expectHumanSize(1024, "1.0K");
+    try expectHumanSize(1025, "1.0K");
+}
+
+test "renderFileSize: precision cutoff (1 decimal below 10, none at/above)" {
+    try expectHumanSize(5000, "4.9K");
+    try expectHumanSize(10239, "10.0K");
+    try expectHumanSize(10240, "10K");
+}
+
+test "renderFileSize: 999.5 correction boundary, at two different units" {
+    try expectHumanSize(1023487, "999K");
+    try expectHumanSize(1023488, "1.0M");
+    try expectHumanSize(1023489, "1.0M");
+    try expectHumanSize(1048051711, "999M");
+    try expectHumanSize(1048051712, "1.0G");
+}
+
+test "renderFileSize: u64 max does not crash or go out of bounds" {
+    try expectHumanSize(18446744073709551615, "16E");
+}
+
+test "renderFileSize: regression cases from the off-by-one and missing-branch bugs" {
+    try expectHumanSize(2791728742, "2.6G");
+    try expectHumanSize(67605770, "64M");
+}
+
+test "renderFileSize: human_readable=false returns the raw byte count" {
+    const alloc = std.testing.allocator;
+    const actual = try renderFileSize(alloc, false, 123456);
+
+    defer alloc.free(actual);
+
+    try std.testing.expectEqualStrings("123456", actual);
 }
