@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 pub const RawStat = struct {
+    name: []const u8,
     kind: std.Io.File.Kind,
     size: u64,
     mode_bits: struct { owner: u3, group: u3, other: u3 },
@@ -48,6 +49,7 @@ fn statEntryMacos(dir_handle: i32, name_z: [:0]const u8) !RawStat {
     const file_size = try toFileSize(c_stat_buf.size);
 
     return .{
+        .name = name_z,
         .mode_bits = .{
             .owner = mode_bits.owner,
             .group = mode_bits.group,
@@ -77,12 +79,13 @@ fn statEntryLinux(dir_handle: i32, name_z: [:0]const u8) !RawStat {
     const mode_bits = splitModeBits(@as(u32, statx_buf.mode));
 
     return .{
+        .name = name_z,
         .mode_bits = .{
             .owner = mode_bits.owner,
             .group = mode_bits.group,
             .other = mode_bits.other,
         },
-        .size = statx_buf.size,
+        .size = statx_buf.size, // no need to pass it to toFileSize() because the is already same
         .uid = statx_buf.uid,
         .gid = statx_buf.gid,
         .kind = modeToKind(@as(u32, statx_buf.mode)),
