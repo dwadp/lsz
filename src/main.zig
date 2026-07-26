@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 const stat = @import("stat.zig");
 const tempora = @import("tempora");
 const table = @import("table.zig");
-const file_entry = @import("file_entry.zig");
+const entry = @import("entry.zig");
 const listing = @import("listing.zig");
 
 const Io = std.Io;
@@ -21,6 +21,8 @@ const help_text =
     \\  -a, --all       List all files and do not ignore entries starting with .
     \\  -l, --list      Use a long listing format
     \\  -h, --human     Print a human readable format information. Will print sizes like 1K 234M 2G etc
+    \\  -s, --sort      Sort the result in ascending order given the fields (name, size, created, modified, accessed)
+    \\  -r, --reverse   Reverse the sorting result
     \\  --help          Show this help message
     \\
     \\Examples:
@@ -28,20 +30,26 @@ const help_text =
     \\  lsz -a
     \\  lsz -l
     \\  lsz /path -l -a
+    \\  lsz /path -la --sort name
+    \\  lsz /path -lar --sort created
 ;
+
+const main_params = clap.parseParamsComptime(
+    \\--help                Display this help and exit.
+    \\-l, --list            Use a long listing format
+    \\-a, --all             List all files and do not ignore entries starting with .
+    \\-h, --human           Print a human readable format information. Will print sizes like 1K 234M 2G etc
+    \\-s, --sort <str>      Sort the result in ascending order given the fields: name, size, created, modified, accessed
+    \\-r, --reverse         Reverse the sorting result
+    \\<str>
+    \\
+);
 
 var show_long_list_format = false;
 var show_all = false;
 var show_human_readable = false;
-
-const main_params = clap.parseParamsComptime(
-    \\--help        Display this help and exit.
-    \\-l, --list    Use a long listing format
-    \\-a, --all     List all files and do not ignore entries starting with .
-    \\-h, --human   Print a human readable format information. Will print sizes like 1K 234M 2G etc
-    \\<str>
-    \\
-);
+var sort_field: ?entry.SortField = null;
+var reverse_sort: bool = false;
 
 pub fn main(init: std.process.Init) !void {
     var stdout_buffer: [1024]u8 = undefined;
@@ -90,6 +98,31 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    if (res.args.sort) |s| {
+        if (std.mem.eql(u8, s, "name")) {
+            sort_field = .name;
+        } else if (std.mem.eql(u8, s, "size")) {
+            sort_field = .size;
+        } else if (std.mem.eql(u8, s, "created")) {
+            sort_field = .created;
+        } else if (std.mem.eql(u8, s, "modified")) {
+            sort_field = .modified;
+        } else if (std.mem.eql(u8, s, "accessed")) {
+            sort_field = .accessed;
+        } else {
+            try stderr.print("unsupported param value for sort: {s}\n", .{s});
+            try stderr.flush();
+
+            std.process.exit(1);
+        }
+    }
+
+    if (sort_field) |_| {
+        if (res.args.reverse == 1) {
+            reverse_sort = true;
+        }
+    }
+
     const allocator = arena.allocator();
     var path: []const u8 = ".";
 
@@ -119,7 +152,7 @@ fn run(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []con
 
     const obj_stat = try cwd.statFile(io, path, .{ .follow_symlinks = false });
 
-    var entries = std.ArrayList(file_entry.Entry).empty;
+    var entries = std.ArrayList(entry.Entry).empty;
     defer entries.deinit(alloc);
 
     switch (obj_stat.kind) {
@@ -129,19 +162,19 @@ fn run(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []con
 
             var iterator = dir.iterate();
 
-            while (try iterator.next(io)) |entry| {
-                if (!show_all and std.mem.startsWith(u8, entry.name, ".")) {
+            while (try iterator.next(io)) |e| {
+                if (!show_all and std.mem.startsWith(u8, e.name, ".")) {
                     continue;
                 }
 
-                try entries.append(alloc, try file_entry.buildEntry(alloc, io, dir, entry.name));
+                try entries.append(alloc, try entry.buildEntry(alloc, io, dir, e.name));
             }
         },
         .file, .unix_domain_socket, .sym_link => {
             const dir = try cwd.openDir(io, dirname, open_dir_options);
             defer dir.close(io);
 
-            try entries.append(alloc, try file_entry.buildEntry(
+            try entries.append(alloc, try entry.buildEntry(
                 alloc,
                 io,
                 dir,
@@ -151,10 +184,19 @@ fn run(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []con
         else => return error.UnknownFile,
     }
 
+    if (sort_field) |s| {
+        const sort = entry.Sort.init(s, reverse_sort, entries.items);
+        sort.sort();
+    }
+
     if (show_long_list_format) {
         try listing.printLongListFormat(alloc, writer, entries, show_human_readable);
     } else {
         try listing.printDefault(writer, entries);
         try writer.flush();
     }
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }

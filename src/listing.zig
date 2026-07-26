@@ -1,21 +1,21 @@
 const std = @import("std");
-const file_entry = @import("file_entry.zig");
+const entry = @import("entry.zig");
 const table = @import("table.zig");
 
-pub fn printDefault(writer: *std.Io.Writer, entries: std.ArrayList(file_entry.Entry)) !void {
-    for (entries.items, 0..) |entry, index| {
+pub fn printDefault(writer: *std.Io.Writer, entries: std.ArrayList(entry.Entry)) !void {
+    for (entries.items, 0..) |e, index| {
         const last_item = index == entries.items.len - 1;
 
         if (!last_item) {
-            try writer.print("{s} ", .{entry.name});
+            try writer.print("{s} ", .{e.name});
         } else {
-            try writer.print("{s}\n", .{entry.name});
+            try writer.print("{s}\n", .{e.name});
         }
     }
 }
 
-pub fn printLongListFormat(alloc: std.mem.Allocator, writer: *std.Io.Writer, entries: std.ArrayList(file_entry.Entry), human_readable: bool) !void {
-    var columns = std.EnumArray(file_entry.EntryField, table.Column).init(.{
+pub fn printLongListFormat(alloc: std.mem.Allocator, writer: *std.Io.Writer, entries: std.ArrayList(entry.Entry), human_readable: bool) !void {
+    var columns = std.EnumArray(entry.EntryField, table.Column).init(.{
         .permission = .init("Permission", table.Align.left),
         .size = .init("Size", table.Align.right),
         .user_name = .init("User", table.Align.left),
@@ -27,8 +27,8 @@ pub fn printLongListFormat(alloc: std.mem.Allocator, writer: *std.Io.Writer, ent
 
     var rows: std.ArrayList([][]const u8) = .empty;
 
-    for (entries.items) |entry| {
-        const cells = try entry.toCells(alloc, human_readable);
+    for (entries.items) |e| {
+        const cells = try e.toCells(alloc, human_readable);
 
         try rows.append(alloc, cells);
     }
