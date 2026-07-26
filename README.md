@@ -16,8 +16,12 @@ If `path` is not provided, `lsz` lists the current directory.
 
 | Option | Description |
 |--------|-------------|
-| `-a` | Show all files, including hidden files |
-| `-l` | Show output in long list format |
+| `-a, --all` | Show all files, including hidden files |
+| `-l, --list` | Show output in long list format |
+| `-h, --human` | Print file sizes in human readable format (e.g. `1K`, `234M`, `2G`) |
+| `-s, --sort <field>` | Sort the result by one of: `name`, `size`, `created`, `modified`, `accessed` |
+| `-r, --reverse` | Reverse the sort order (only has an effect together with `-s`/`--sort`) |
+| `--help` | Show this help message |
 
 ### Examples
 
@@ -30,6 +34,10 @@ lsz /path -l
 lsz /path -a
 lsz -l
 lsz -a
+lsz -lh /path
+lsz /path -la --sort name
+lsz /path -lar --sort created
+lsz -s size -r
 ```
 
 ## Supported Platforms
@@ -43,11 +51,3 @@ lsz -a
 Planned features:
 
 - Linux and Windows support
-- `-h` for human readable file sizes & timestamps
-- `-s` for sorting by one of the following criteria:
-  - filesize
-  - name
-  - created date
-  - modified date
-  - accessed date
-- `-sr` for reverse sort
