@@ -12,6 +12,8 @@ pub fn printDefault(writer: *std.Io.Writer, entries: std.ArrayList(entry.Entry))
             try writer.print("{s}\n", .{e.name});
         }
     }
+
+    try writer.flush();
 }
 
 pub fn printLongListFormat(alloc: std.mem.Allocator, writer: *std.Io.Writer, entries: std.ArrayList(entry.Entry), human_readable: bool) !void {
@@ -40,7 +42,7 @@ fn testEntry(name: []const u8, size: u64) entry.Entry {
     return .{
         .kind = .file,
         .size = size,
-        .permission = .{
+        .mode = .{
             .owner = 7,
             .group = 5,
             .other = 5,

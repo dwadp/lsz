@@ -155,33 +155,31 @@ fn run(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []con
     var entries = std.ArrayList(entry.Entry).empty;
     defer entries.deinit(alloc);
 
-    switch (obj_stat.kind) {
-        .directory => {
-            const dir = try cwd.openDir(io, path, open_dir_options);
-            defer dir.close(io);
+    if (obj_stat.kind == .directory) {
+        const dir = try cwd.openDir(io, path, open_dir_options);
+        defer dir.close(io);
 
-            var iterator = dir.iterate();
+        var iterator = dir.iterate();
 
-            while (try iterator.next(io)) |e| {
-                if (!show_all and std.mem.startsWith(u8, e.name, ".")) {
-                    continue;
-                }
-
-                try entries.append(alloc, try entry.buildEntry(alloc, io, dir, e.name));
+        while (try iterator.next(io)) |e| {
+            if (!show_all and std.mem.startsWith(u8, e.name, ".")) {
+                continue;
             }
-        },
-        .file, .unix_domain_socket, .sym_link => {
-            const dir = try cwd.openDir(io, dirname, open_dir_options);
-            defer dir.close(io);
 
-            try entries.append(alloc, try entry.buildEntry(
-                alloc,
-                io,
-                dir,
-                basename,
-            ));
-        },
-        else => return error.UnknownFile,
+            try entries.append(alloc, try entry.buildEntry(alloc, io, dir, e.name));
+        }
+    } else if (obj_stat.kind != .unknown) {
+        const dir = try cwd.openDir(io, dirname, open_dir_options);
+        defer dir.close(io);
+
+        try entries.append(alloc, try entry.buildEntry(
+            alloc,
+            io,
+            dir,
+            basename,
+        ));
+    } else {
+        return error.UnknownFile;
     }
 
     if (sort_field) |s| {
@@ -193,7 +191,6 @@ fn run(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []con
         try listing.printLongListFormat(alloc, writer, entries, show_human_readable);
     } else {
         try listing.printDefault(writer, entries);
-        try writer.flush();
     }
 }
 

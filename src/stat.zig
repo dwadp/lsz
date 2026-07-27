@@ -95,13 +95,14 @@ fn statEntryLinux(dir_handle: i32, name_z: [:0]const u8) !RawStat {
     };
 }
 
-// Convert linux file mode to std.Io.File.Kind
-// Need to work on for windows
 fn modeToKind(mode: u32) std.Io.File.Kind {
     if (std.c.S.ISDIR(mode)) return .directory;
     if (std.c.S.ISREG(mode)) return .file;
     if (std.c.S.ISLNK(mode)) return .sym_link;
     if (std.c.S.ISSOCK(mode)) return .unix_domain_socket;
+    if (std.c.S.ISCHR(mode)) return .character_device;
+    if (std.c.S.ISBLK(mode)) return .block_device;
+    if (std.c.S.ISFIFO(mode)) return .named_pipe;
 
     return .unknown;
 }
@@ -207,4 +208,15 @@ test "splitModeBits: ignores file type bits above permission bits" {
     try std.testing.expectEqual(@as(u3, 7), result.owner);
     try std.testing.expectEqual(@as(u3, 5), result.group);
     try std.testing.expectEqual(@as(u3, 5), result.other);
+}
+
+test "modeToKind: maps raw stat mode bits to the correct Kind" {
+    try std.testing.expectEqual(.directory, modeToKind(0o040755));
+    try std.testing.expectEqual(.file, modeToKind(0o100644));
+    try std.testing.expectEqual(.sym_link, modeToKind(0o120777));
+    try std.testing.expectEqual(.unix_domain_socket, modeToKind(0o140755));
+    try std.testing.expectEqual(.character_device, modeToKind(0o020666));
+    try std.testing.expectEqual(.block_device, modeToKind(0o060660));
+    try std.testing.expectEqual(.named_pipe, modeToKind(0o010644));
+    try std.testing.expectEqual(.unknown, modeToKind(0));
 }

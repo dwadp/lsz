@@ -3,21 +3,21 @@ const stat = @import("stat.zig");
 const std = @import("std");
 const Io = std.Io;
 
-pub const Permission = struct {
+pub const Mode = struct {
     owner: u32,
     group: u32,
     other: u32,
     user_name: []const u8,
     group_name: []const u8,
 
-    fn render(self: @This(), alloc: std.mem.Allocator) ![]const u8 {
-        var permission = [_]u8{'-'} ** 10;
+    pub fn render(self: @This(), alloc: std.mem.Allocator) ![]const u8 {
+        var mode = [_]u8{'-'} ** 9;
 
-        decodeModeDigit(permission[1..4], self.owner);
-        decodeModeDigit(permission[4..7], self.group);
-        decodeModeDigit(permission[7..10], self.other);
+        decodeModeDigit(mode[0..3], self.owner);
+        decodeModeDigit(mode[3..6], self.group);
+        decodeModeDigit(mode[6..9], self.other);
 
-        return try std.fmt.allocPrint(alloc, "{s}", .{permission});
+        return try std.fmt.allocPrint(alloc, "{s}", .{mode});
     }
 
     fn decodeModeDigit(slots: []u8, mode: u32) void {
@@ -30,8 +30,8 @@ pub const Permission = struct {
             slots[1] = 'w';
             slots[2] = '-';
         } else if (mode == 3) {
-            slots[0] = 'w';
-            slots[1] = '-';
+            slots[0] = '-';
+            slots[1] = 'w';
             slots[2] = 'x';
         } else if (mode == 4) {
             slots[0] = 'r';
@@ -49,16 +49,43 @@ pub const Permission = struct {
             slots[0] = 'r';
             slots[1] = 'w';
             slots[2] = 'x';
+        } else {
+            slots[0] = '-';
+            slots[1] = '-';
+            slots[2] = '-';
         }
     }
 };
+
+fn testMode(owner: u32, group: u32, other: u32) Mode {
+    return .{ .owner = owner, .group = group, .other = other, .user_name = "user", .group_name = "group" };
+}
+
+test "Mode.decodeModeDigit: exhaustive over all 8 possible mode values" {
+    const cases = [_]struct { mode: u32, expected: []const u8 }{
+        .{ .mode = 0, .expected = "---" },
+        .{ .mode = 1, .expected = "--x" },
+        .{ .mode = 2, .expected = "-w-" },
+        .{ .mode = 3, .expected = "-wx" },
+        .{ .mode = 4, .expected = "r--" },
+        .{ .mode = 5, .expected = "r-x" },
+        .{ .mode = 6, .expected = "rw-" },
+        .{ .mode = 7, .expected = "rwx" },
+    };
+
+    for (cases) |c| {
+        var slots = [_]u8{'?'} ** 3;
+        Mode.decodeModeDigit(&slots, c.mode);
+        try std.testing.expectEqualStrings(c.expected, &slots);
+    }
+}
 
 pub const EntryField = enum(usize) { permission, size, user_name, group_name, created_timestamp, modified_timestamp, name };
 
 pub const Entry = struct {
     kind: Io.File.Kind,
     size: u64,
-    permission: Permission,
+    mode: Mode,
     created_timestamp: ?Io.Timestamp,
     modified_timestamp: ?Io.Timestamp,
     accessed_timestamp: ?Io.Timestamp,
@@ -69,10 +96,10 @@ pub const Entry = struct {
         const tz = tempora.Timezone.utc;
 
         const fields = std.EnumArray(EntryField, []const u8).init(.{
-            .permission = try self.permission.render(alloc),
+            .permission = try self.renderMode(alloc),
             .size = try self.renderSize(alloc, human_readable),
-            .user_name = self.permission.user_name,
-            .group_name = self.permission.group_name,
+            .user_name = self.mode.user_name,
+            .group_name = self.mode.group_name,
             .created_timestamp = try renderDate(alloc, tz, self.created_timestamp, human_readable),
             .modified_timestamp = try renderDate(alloc, tz, self.modified_timestamp, human_readable),
             .name = try self.renderName(alloc),
@@ -105,6 +132,23 @@ pub const Entry = struct {
         }
 
         return "";
+    }
+
+    pub fn renderMode(self: @This(), alloc: std.mem.Allocator) ![]const u8 {
+        const mode = try self.mode.render(alloc);
+
+        const kind_char: u8 = switch (self.kind) {
+            .directory => 'd',
+            .sym_link => 'l',
+            .unix_domain_socket => 's',
+            .character_device => 'c',
+            .block_device => 'b',
+            .named_pipe => 'p',
+            .file => '-',
+            else => '?',
+        };
+
+        return try std.fmt.allocPrint(alloc, "{c}{s}", .{ kind_char, mode });
     }
 };
 
@@ -179,7 +223,7 @@ pub fn buildEntry(alloc: std.mem.Allocator, io: std.Io, dir: Io.Dir, name: []con
 
     return .{
         .kind = raw_stat.kind,
-        .permission = .{
+        .mode = .{
             .owner = raw_stat.mode_bits.owner,
             .group = raw_stat.mode_bits.group,
             .other = raw_stat.mode_bits.other,
@@ -276,11 +320,43 @@ test "renderFileSize: human_readable=false returns the raw byte count" {
     try std.testing.expectEqualStrings("123456", actual);
 }
 
+fn testEntryRenderMode(kind: std.Io.File.Kind, owner: u32, group: u32, other: u32) Entry {
+    return .{
+        .name = "a_file",
+        .size = 100,
+        .kind = kind,
+        .mode = .{ .owner = owner, .group = group, .other = other, .user_name = "user", .group_name = "group" },
+        .created_timestamp = null,
+        .modified_timestamp = null,
+        .accessed_timestamp = null,
+        .target_link_name = null,
+    };
+}
+
+test "renderMode: should render a complete file kind & mode" {
+    const t_alloc = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena.deinit();
+
+    const a_alloc = arena.allocator();
+
+    try std.testing.expectEqualStrings("-rwxr-x--x", try testEntryRenderMode(.file, 7, 5, 1).renderMode(a_alloc));
+    try std.testing.expectEqualStrings("drwxr-x--x", try testEntryRenderMode(.directory, 7, 5, 1).renderMode(a_alloc));
+    try std.testing.expectEqualStrings("lrwxr-x--x", try testEntryRenderMode(.sym_link, 7, 5, 1).renderMode(a_alloc));
+    try std.testing.expectEqualStrings("srwxr-x--x", try testEntryRenderMode(.unix_domain_socket, 7, 5, 1).renderMode(a_alloc));
+    try std.testing.expectEqualStrings("crwxr-x--x", try testEntryRenderMode(.character_device, 7, 5, 1).renderMode(a_alloc));
+    try std.testing.expectEqualStrings("brwxr-x--x", try testEntryRenderMode(.block_device, 7, 5, 1).renderMode(a_alloc));
+    try std.testing.expectEqualStrings("prwxr-x--x", try testEntryRenderMode(.named_pipe, 7, 5, 1).renderMode(a_alloc));
+    try std.testing.expectEqualStrings("?rwxr-x--x", try testEntryRenderMode(.event_port, 7, 5, 1).renderMode(a_alloc));
+    try std.testing.expectEqualStrings("?rwxr-x--x", try testEntryRenderMode(.door, 7, 5, 1).renderMode(a_alloc));
+    try std.testing.expectEqualStrings("?rwxr-x--x", try testEntryRenderMode(.whiteout, 7, 5, 1).renderMode(a_alloc));
+}
+
 fn testEntry(name: []const u8, size: u64, created_ns: ?i96, modified_ns: ?i96, accessed_ns: ?i96) Entry {
     return .{
         .kind = .file,
         .size = size,
-        .permission = .{
+        .mode = .{
             .owner = 7,
             .group = 5,
             .other = 5,
