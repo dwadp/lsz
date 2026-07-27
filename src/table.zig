@@ -59,3 +59,48 @@ fn renderCell(writer: *std.Io.Writer, cell: []const u8, width: usize, alignment:
         .right => try writer.print("{s:>[1]}", .{ cell, width }),
     }
 }
+
+fn expectRendered(columns: []Column, rows: []const []const []const u8, expected: []const u8) !void {
+    var buf: [1024]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try render(&w, columns, rows);
+    try std.testing.expectEqualStrings(expected, w.buffered());
+}
+
+test "table.render: basic header & row alignment" {
+    var columns = [_]Column{
+        .init("Size", .right),
+        .init("Name", .left),
+    };
+
+    const rows = [_][]const []const u8{
+        &.{ "12", "a.txt" },
+    };
+
+    try expectRendered(&columns, &rows, "Size  Name\n  12  a.txt\n");
+}
+
+test "table.render: column width is driven by the widest rows" {
+    var columns = [_]Column{
+        .init("Size", .right),
+        .init("Name", .left),
+    };
+
+    const rows = [_][]const []const u8{
+        &.{ "12", "a.txt" },
+        &.{ "999999", "b.txt" },
+    };
+
+    try expectRendered(&columns, &rows, "  Size  Name\n    12  a.txt\n999999  b.txt\n");
+}
+
+test "table.render: header only, no rows" {
+    var columns = [_]Column{
+        .init("Size", .right),
+        .init("Name", .left),
+    };
+
+    const rows = [_][]const []const u8{};
+
+    try expectRendered(&columns, &rows, "Size  Name\n");
+}
