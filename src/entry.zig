@@ -1,6 +1,7 @@
 const tempora = @import("tempora");
 const stat = @import("stat.zig");
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 
 pub const Mode = struct {
@@ -205,7 +206,11 @@ pub const Sort = struct {
 
 pub fn buildEntry(alloc: std.mem.Allocator, io: std.Io, dir: Io.Dir, name: []const u8) !Entry {
     var target_link_name: ?[]const u8 = null;
-    const raw_stat = try stat.statEntry(dir.handle, try alloc.dupeZ(u8, name));
+
+    const name_z = try alloc.dupeZ(u8, name);
+    defer alloc.free(name_z);
+
+    const raw_stat = try stat.statEntry(dir.handle, name_z);
 
     if (raw_stat.kind == .sym_link) {
         var buffer: [std.fs.max_path_bytes]u8 = undefined;
@@ -230,7 +235,7 @@ pub fn buildEntry(alloc: std.mem.Allocator, io: std.Io, dir: Io.Dir, name: []con
             .user_name = owner_group_names.user_name,
             .group_name = owner_group_names.group_name,
         },
-        .name = raw_stat.name,
+        .name = try alloc.dupe(u8, raw_stat.name),
         .target_link_name = target_link_name,
         .size = raw_stat.size,
         .modified_timestamp = raw_stat.modified,
@@ -523,4 +528,122 @@ test "Sort: single-element and empty slice do not crash" {
 
     try expectNamesInOrder(&entries, &[_][]const u8{"Dockerfile"});
     try expectNamesInOrder(&entries2, &[_][]const u8{});
+}
+
+test "buildEntry: reads a regular file from a real temp directory" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+
+    try temp.dir.writeFile(io, .{
+        .data = "hi there",
+        .sub_path = "hello.txt",
+    });
+
+    const file = try temp.dir.openFile(io, "hello.txt", .{ .mode = .read_write });
+    defer file.close(io);
+
+    try file.setTimestamps(io, .{ .modify_timestamp = .{ .new = .fromNanoseconds(0) }, .access_timestamp = .{ .new = .fromNanoseconds(0) } });
+
+    const e = try buildEntry(alloc, io, temp.dir, "hello.txt");
+    defer {
+        alloc.free(e.name);
+        alloc.free(e.mode.group_name);
+        alloc.free(e.mode.user_name);
+    }
+
+    try std.testing.expectEqual(.file, e.kind);
+    try std.testing.expectEqual(@as(u64, 8), e.size);
+    try std.testing.expectEqual(@as(i96, 0), e.modified_timestamp.?.nanoseconds);
+    try std.testing.expectEqual(@as(i96, 0), e.accessed_timestamp.?.nanoseconds);
+}
+
+test "buildEntry: reads a directory" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+
+    try temp.dir.createDir(io, "sub_dir", .default_dir);
+
+    const e = try buildEntry(alloc, io, temp.dir, "sub_dir");
+    defer {
+        alloc.free(e.name);
+        alloc.free(e.mode.group_name);
+        alloc.free(e.mode.user_name);
+    }
+
+    try std.testing.expectEqual(.directory, e.kind);
+}
+
+test "buildEntry: resolves symlink target" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+
+    try temp.dir.writeFile(io, .{
+        .data = "",
+        .sub_path = "target.txt",
+    });
+
+    try temp.dir.symLink(io, "target.txt", "link.txt", .{});
+
+    const e = try buildEntry(alloc, io, temp.dir, "link.txt");
+    defer {
+        alloc.free(e.name);
+        alloc.free(e.mode.group_name);
+        alloc.free(e.mode.user_name);
+        alloc.free(e.target_link_name.?);
+    }
+
+    try std.testing.expectEqual(.sym_link, e.kind);
+    try std.testing.expectEqualStrings("target.txt", e.target_link_name.?);
+}
+
+test "buildEntry: resolves symlink to unexisted target" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+
+    try temp.dir.symLink(io, "broken_target.txt", "broken_link.txt", .{});
+
+    const e = try buildEntry(alloc, io, temp.dir, "broken_link.txt");
+    defer {
+        alloc.free(e.name);
+        alloc.free(e.mode.group_name);
+        alloc.free(e.mode.user_name);
+        alloc.free(e.target_link_name.?);
+    }
+
+    try std.testing.expectEqual(.sym_link, e.kind);
+    try std.testing.expectEqualStrings("broken_target.txt", e.target_link_name.?);
+}
+
+test "buildEntry: classifies /dev/null as a character device" {
+    if (builtin.os.tag == .windows) {
+        return error.SkipZigTest;
+    }
+
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+
+    const cwd = Io.Dir.cwd();
+    const dev = try cwd.openFile(io, "/dev/null", .{});
+    defer dev.close(io);
+
+    const e = try buildEntry(alloc, io, cwd, "/dev/null");
+    defer {
+        alloc.free(e.name);
+        alloc.free(e.mode.group_name);
+        alloc.free(e.mode.user_name);
+    }
+
+    try std.testing.expectEqual(.character_device, e.kind);
 }
