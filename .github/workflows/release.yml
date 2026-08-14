@@ -80,8 +80,6 @@ jobs:
     steps:
       - name: Download Artifact
         uses: actions/download-artifact@v8
-        with:
-          name: lsz-${{ matrix.os_label }}-${{ matrix.arch_label }}
 
       - name: Release
         uses: softprops/action-gh-release@v3
