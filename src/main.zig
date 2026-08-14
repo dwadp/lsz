@@ -6,7 +6,9 @@ const tempora = @import("tempora");
 const table = @import("table.zig");
 const entry = @import("entry.zig");
 const listing = @import("listing.zig");
+const build_config = @import("build_config");
 
+const program_version = build_config.program_version;
 const Io = std.Io;
 
 const help_text =
@@ -24,6 +26,7 @@ const help_text =
     \\  -s, --sort      Sort the result in ascending order given the fields (name, size, created, modified, accessed)
     \\  -r, --reverse   Reverse the sorting result
     \\  -t, --timezone  Specify an IANA tz database timezone, e.g. Asia/Makassar. This only works if you pass (-l or --list) option
+    \\  -v, --version   Print lsz version
     \\  --help          Show this help message
     \\
     \\Examples:
@@ -45,6 +48,7 @@ const main_params = clap.parseParamsComptime(
     \\-s, --sort <str>      Sort the result in ascending order given the fields: name, size, created, modified, accessed
     \\-r, --reverse         Reverse the sorting result
     \\-t, --timezone <str>  Specify an IANA tz database timezone, e.g. Asia/Makassar. This only works if you pass (-l or --list) option
+    \\-v, --version         Print lsz version
     \\<str>
     \\
 );
@@ -93,16 +97,12 @@ pub fn main(init: std.process.Init) !void {
     defer arena.deinit();
 
     if (res.args.help == 1) {
-        stdout.print("{s}\n", .{help_text}) catch |err| {
-            std.log.warn("failed to print help text: {}\n", .{err});
-            return err;
-        };
+        try writeAndFlush(stdout, "{s}\n", .{help_text});
+        return;
+    }
 
-        stdout.flush() catch |err| {
-            std.log.warn("failed to flush stdout: {}\n", .{err});
-            return err;
-        };
-
+    if (res.args.version == 1) {
+        try writeAndFlush(stdout, "{s}\n", .{program_version});
         return;
     }
 
@@ -156,6 +156,18 @@ pub fn main(init: std.process.Init) !void {
             std.process.exit(1);
         },
         else => return err,
+    };
+}
+
+fn writeAndFlush(writer: *std.Io.Writer, comptime fmt: []const u8, args: anytype) !void {
+    writer.print(fmt, args) catch |err| {
+        std.log.warn("failed to print: {}\n", .{err});
+        return err;
+    };
+
+    writer.flush() catch |err| {
+        std.log.warn("failed to flush stdout: {}\n", .{err});
+        return err;
     };
 }
 

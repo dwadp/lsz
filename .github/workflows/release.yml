@@ -47,6 +47,7 @@ jobs:
           zig build \
             -Dtarget=${{ matrix.target }} \
             -Doptimize=ReleaseSafe \
+            -Dversion=${{ steps.get_version.outputs.version }} \
             --prefix out/${{ matrix.target }}
 
       - name: Package Artifact
