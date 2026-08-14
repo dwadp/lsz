@@ -1,5 +1,6 @@
 const std = @import("std");
 const tempora = @import("tempora");
+const entry = @import("entry.zig");
 
 pub const Align = enum { left, right };
 
@@ -16,6 +17,28 @@ pub const Column = struct {
         };
     }
 };
+
+pub fn print(alloc: std.mem.Allocator, writer: *std.Io.Writer, entries: std.ArrayList(entry.Entry), human_readable: bool, tz: tempora.Timezone) !void {
+    var columns = std.EnumArray(entry.EntryField, Column).init(.{
+        .permission = .init("Permission", Align.left),
+        .size = .init("Size", Align.right),
+        .user_name = .init("User", Align.left),
+        .group_name = .init("Group", Align.left),
+        .created_timestamp = .init("Date Created", Align.left),
+        .modified_timestamp = .init("Date Modified", Align.left),
+        .name = .init("Name", Align.left),
+    });
+
+    var rows: std.ArrayList([][]const u8) = .empty;
+
+    for (entries.items) |e| {
+        const cells = try e.toCells(alloc, human_readable, tz);
+
+        try rows.append(alloc, cells);
+    }
+
+    try render(writer, &columns.values, rows.items);
+}
 
 pub fn render(writer: *std.Io.Writer, columns: []Column, rows: []const []const []const u8) !void {
     for (rows) |row| {
@@ -67,6 +90,25 @@ fn expectRendered(columns: []Column, rows: []const []const []const u8, expected:
     try std.testing.expectEqualStrings(expected, w.buffered());
 }
 
+fn testEntry(name: []const u8, size: u64) entry.Entry {
+    return .{
+        .kind = .file,
+        .size = size,
+        .mode = .{
+            .owner = 7,
+            .group = 5,
+            .other = 5,
+            .user_name = "user",
+            .group_name = "group",
+        },
+        .created_timestamp = null,
+        .modified_timestamp = null,
+        .accessed_timestamp = null,
+        .name = name,
+        .target_link_name = null,
+    };
+}
+
 test "table.render: basic header & row alignment" {
     var columns = [_]Column{
         .init("Size", .right),
@@ -103,4 +145,34 @@ test "table.render: header only, no rows" {
     const rows = [_][]const []const u8{};
 
     try expectRendered(&columns, &rows, "Size  Name\n");
+}
+
+test "table.print" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const alloc = arena.allocator();
+
+    var buf: [1024]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+
+    var entries: std.ArrayList(entry.Entry) = .empty;
+
+    try entries.append(alloc, testEntry("a.txt", 12));
+
+    try print(alloc, &w, entries, false, tempora.Timezone.utc);
+
+    const output = w.buffered();
+
+    try std.testing.expect(std.mem.indexOf(u8, output, "Permission") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "Size") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "User") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "Group") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "Name") != null);
+
+    try std.testing.expect(std.mem.indexOf(u8, output, "-rwxr-xr-x") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "a.txt") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "12") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "user") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "group") != null);
 }

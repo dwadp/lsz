@@ -26,6 +26,7 @@ const help_text =
     \\  -s, --sort      Sort the result in ascending order given the fields (name, size, created, modified, accessed)
     \\  -r, --reverse   Reverse the sorting result
     \\  -t, --timezone  Specify an IANA tz database timezone, e.g. Asia/Makassar. This only works if you pass (-l or --list) option
+    \\  --output-type   Specify the output format (csv or tsv)
     \\  -v, --version   Print lsz version
     \\  --help          Show this help message
     \\
@@ -48,6 +49,7 @@ const main_params = clap.parseParamsComptime(
     \\-s, --sort <str>      Sort the result in ascending order given the fields: name, size, created, modified, accessed
     \\-r, --reverse         Reverse the sorting result
     \\-t, --timezone <str>  Specify an IANA tz database timezone, e.g. Asia/Makassar. This only works if you pass (-l or --list) option
+    \\--output-type <str>   Specify the output format (csv or tsv)
     \\-v, --version         Print lsz version
     \\<str>
     \\
@@ -149,7 +151,21 @@ pub fn main(init: std.process.Init) !void {
         tz = t.*;
     }
 
-    run(allocator, io, &stdout_impl.interface, path, tz) catch |err| switch (err) {
+    var out_type: listing.OutputType = .table;
+    const out_type_str = if (res.args.@"output-type") |o|
+        o
+    else if (init.environ_map.get("OUT_TYPE")) |o|
+        o
+    else
+        "";
+
+    if (std.mem.eql(u8, out_type_str, "csv")) {
+        out_type = .csv;
+    } else if (std.mem.eql(u8, out_type_str, "tsv")) {
+        out_type = .tsv;
+    }
+
+    run(allocator, io, &stdout_impl.interface, path, tz, out_type) catch |err| switch (err) {
         error.FileNotFound => {
             stderr.print("No such file or directory: {s}\n", .{path}) catch {};
             stderr.flush() catch {};
@@ -171,7 +187,7 @@ fn writeAndFlush(writer: *std.Io.Writer, comptime fmt: []const u8, args: anytype
     };
 }
 
-fn run(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []const u8, tz: tempora.Timezone) !void {
+fn run(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []const u8, tz: tempora.Timezone, out_type: listing.OutputType) !void {
     const basename = std.fs.path.basename(path);
     const dirname = std.fs.path.dirname(path) orelse ".";
     const open_dir_options: std.Io.Dir.OpenOptions = .{ .iterate = true, .follow_symlinks = false };
@@ -215,7 +231,7 @@ fn run(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []con
     }
 
     if (show_long_list_format) {
-        try listing.printLongListFormat(alloc, writer, entries, show_human_readable, tz);
+        try listing.printLongListFormat(alloc, writer, entries, show_human_readable, tz, out_type);
     } else {
         try listing.printDefault(writer, entries);
     }

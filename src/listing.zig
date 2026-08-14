@@ -1,7 +1,10 @@
 const std = @import("std");
 const entry = @import("entry.zig");
 const table = @import("table.zig");
+const dsv = @import("dsv.zig");
 const tempora = @import("tempora");
+
+pub const OutputType = enum { table, csv, tsv };
 
 pub fn printDefault(writer: *std.Io.Writer, entries: std.ArrayList(entry.Entry)) !void {
     for (entries.items, 0..) |e, index| {
@@ -17,26 +20,20 @@ pub fn printDefault(writer: *std.Io.Writer, entries: std.ArrayList(entry.Entry))
     try writer.flush();
 }
 
-pub fn printLongListFormat(alloc: std.mem.Allocator, writer: *std.Io.Writer, entries: std.ArrayList(entry.Entry), human_readable: bool, tz: tempora.Timezone) !void {
-    var columns = std.EnumArray(entry.EntryField, table.Column).init(.{
-        .permission = .init("Permission", table.Align.left),
-        .size = .init("Size", table.Align.right),
-        .user_name = .init("User", table.Align.left),
-        .group_name = .init("Group", table.Align.left),
-        .created_timestamp = .init("Date Created", table.Align.left),
-        .modified_timestamp = .init("Date Modified", table.Align.left),
-        .name = .init("Name", table.Align.left),
-    });
+pub fn printLongListFormat(alloc: std.mem.Allocator, writer: *std.Io.Writer, entries: std.ArrayList(entry.Entry), human_readable: bool, tz: tempora.Timezone, out_type: OutputType) !void {
+    switch (out_type) {
+        .table => try table.print(alloc, writer, entries, human_readable, tz),
+        else => {
+            const delimiter = if (out_type == .tsv)
+                dsv.Delimiter.tab
+            else if (out_type == .csv)
+                dsv.Delimiter.comma
+            else
+                dsv.Delimiter.comma;
 
-    var rows: std.ArrayList([][]const u8) = .empty;
-
-    for (entries.items) |e| {
-        const cells = try e.toCells(alloc, human_readable, tz);
-
-        try rows.append(alloc, cells);
+            try dsv.print(alloc, writer, entries, human_readable, tz, delimiter);
+        },
     }
-
-    try table.render(writer, &columns.values, rows.items);
 }
 
 fn testEntry(name: []const u8, size: u64) entry.Entry {
@@ -97,33 +94,36 @@ test "printDefault: empty entries display nothing" {
 }
 
 test "printLongListFormat: render header and rows through the real table + entry pipeline" {
-    const t_alloc = std.testing.allocator;
-    var arena = std.heap.ArenaAllocator.init(t_alloc);
-    defer arena.deinit();
+    const cases = [_]OutputType{ .table, .tsv, .csv };
 
-    const a_aloc = arena.allocator();
+    for (cases) |case| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
 
-    var entries = std.ArrayList(entry.Entry).empty;
-    defer entries.deinit(a_aloc);
+        const a_aloc = arena.allocator();
 
-    try entries.append(a_aloc, testEntry(".gitignore", 100));
+        var entries = std.ArrayList(entry.Entry).empty;
+        defer entries.deinit(a_aloc);
 
-    var buf: [2048]u8 = undefined;
-    var w = std.Io.Writer.fixed(&buf);
+        try entries.append(a_aloc, testEntry(".gitignore", 100));
 
-    try printLongListFormat(a_aloc, &w, entries, false, tempora.Timezone.utc);
+        var buf: [2048]u8 = undefined;
+        var w = std.Io.Writer.fixed(&buf);
 
-    const output = w.buffered();
+        try printLongListFormat(a_aloc, &w, entries, false, tempora.Timezone.utc, case);
 
-    try std.testing.expect(std.mem.indexOf(u8, output, "Permission") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "Size") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "User") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "Group") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "Name") != null);
+        const output = w.buffered();
 
-    try std.testing.expect(std.mem.indexOf(u8, output, "-rwxr-xr-x") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, ".gitignore") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "100") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "user") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "group") != null);
+        try std.testing.expect(std.mem.indexOf(u8, output, "Permission") != null);
+        try std.testing.expect(std.mem.indexOf(u8, output, "Size") != null);
+        try std.testing.expect(std.mem.indexOf(u8, output, "User") != null);
+        try std.testing.expect(std.mem.indexOf(u8, output, "Group") != null);
+        try std.testing.expect(std.mem.indexOf(u8, output, "Name") != null);
+
+        try std.testing.expect(std.mem.indexOf(u8, output, "-rwxr-xr-x") != null);
+        try std.testing.expect(std.mem.indexOf(u8, output, ".gitignore") != null);
+        try std.testing.expect(std.mem.indexOf(u8, output, "100") != null);
+        try std.testing.expect(std.mem.indexOf(u8, output, "user") != null);
+        try std.testing.expect(std.mem.indexOf(u8, output, "group") != null);
+    }
 }
