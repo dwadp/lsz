@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    name: Build
+    name: Build ${{ matrix.os_label }}-${{ matrix.arch_label }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -42,7 +42,7 @@ jobs:
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Cross Compile
+      - name: Compile ${{ matrix.os_label }}-${{ matrix.arch_label }}
         run: |
           zig build \
             -Dtarget=${{ matrix.target }} \
@@ -67,7 +67,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: lsz-${{ matrix.os_label }}-${{ matrix.arch_label }}
-          archive: false
           path: |
             lsz-*.tar.gz
             lsz-*.tar.gz.sha256
