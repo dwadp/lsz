@@ -1,0 +1,25 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel, macos-15]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository code
+        uses: actions/checkout@v4
+
+      - name: Set up zig
+        uses: https://codeberg.org/mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Run test
+        run: zig build test --summary all
