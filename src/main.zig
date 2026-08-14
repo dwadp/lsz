@@ -240,3 +240,227 @@ fn run(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []con
 test {
     std.testing.refAllDecls(@This());
 }
+
+fn redactVolatileFields(alloc: std.mem.Allocator, output: []const u8, delimiter: u8) ![]const u8 {
+    var result: std.ArrayList(u8) = .empty;
+    defer result.deinit(alloc);
+
+    var lines = std.mem.splitScalar(u8, output, '\n');
+    var line_index: usize = 0;
+
+    while (lines.next()) |line| {
+        if (line_index != 0) try result.append(alloc, '\n');
+        if (line.len == 0) {
+            line_index += 1;
+            continue;
+        }
+
+        var fields = std.mem.splitScalar(u8, line, delimiter);
+        var field_index: usize = 0;
+
+        while (fields.next()) |field| {
+            if (field_index != 0) try result.append(alloc, delimiter);
+
+            const is_volatile = line_index != 0 and (field_index == 2 or field_index == 3 or field_index == 4 or field_index == 5);
+            try result.appendSlice(alloc, if (is_volatile) "REDACTED" else field);
+
+            field_index += 1;
+        }
+
+        line_index += 1;
+    }
+
+    return result.toOwnedSlice(alloc);
+}
+
+test "e2e: lsz prints file names in default format" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+
+    try temp.dir.writeFile(io, .{ .data = "", .sub_path = "b.txt" });
+    try temp.dir.writeFile(io, .{ .data = "", .sub_path = "a.txt" });
+
+    const fixture_path = try temp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(fixture_path);
+
+    const result = try std.process.run(alloc, io, .{
+        .argv = &.{ "zig-out/bin/lsz", fixture_path, "--sort", "name" },
+    });
+
+    defer alloc.free(result.stdout);
+    defer alloc.free(result.stderr);
+
+    const golden = try std.Io.Dir.cwd().readFileAlloc(
+        io,
+        "tests/golden/default_listing.stdout",
+        alloc,
+        .unlimited,
+    );
+
+    defer alloc.free(golden);
+
+    try std.testing.expectEqualStrings(golden, result.stdout);
+}
+
+test "e2e: lsz --output-type csv separates fields with commas" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+
+    try temp.dir.writeFile(io, .{ .data = "ab", .sub_path = "file.txt" });
+
+    const fixture_path = try temp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(fixture_path);
+
+    const result = try std.process.run(alloc, io, .{
+        .argv = &.{ "zig-out/bin/lsz", fixture_path, "-l", "--output-type", "csv" },
+    });
+
+    defer alloc.free(result.stdout);
+    defer alloc.free(result.stderr);
+
+    const normalized = try redactVolatileFields(alloc, result.stdout, ',');
+    defer alloc.free(normalized);
+
+    const golden = try std.Io.Dir.cwd().readFileAlloc(io, "tests/golden/output_csv.stdout", alloc, .unlimited);
+    defer alloc.free(golden);
+
+    try std.testing.expectEqualStrings(golden, normalized);
+}
+
+test "e2e: lsz --output-type tsv separates fields with tabs" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+
+    try temp.dir.writeFile(io, .{ .data = "ab", .sub_path = "file.txt" });
+
+    const fixture_path = try temp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(fixture_path);
+
+    const result = try std.process.run(alloc, io, .{
+        .argv = &.{ "zig-out/bin/lsz", fixture_path, "-l", "--output-type", "tsv" },
+    });
+
+    defer alloc.free(result.stdout);
+    defer alloc.free(result.stderr);
+
+    const normalized = try redactVolatileFields(alloc, result.stdout, '\t');
+    defer alloc.free(normalized);
+
+    const golden = try std.Io.Dir.cwd().readFileAlloc(io, "tests/golden/output_tsv.stdout", alloc, .unlimited);
+    defer alloc.free(golden);
+
+    try std.testing.expectEqualStrings(golden, normalized);
+}
+
+test "e2e: lsz --help prints the help text" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+
+    const result = try std.process.run(alloc, io, .{
+        .argv = &.{ "zig-out/bin/lsz", "--help" },
+    });
+
+    defer alloc.free(result.stdout);
+    defer alloc.free(result.stderr);
+
+    const golden = try std.Io.Dir.cwd().readFileAlloc(io, "tests/golden/help.stdout", alloc, .unlimited);
+    defer alloc.free(golden);
+
+    try std.testing.expectEqualStrings(golden, result.stdout);
+}
+
+test "e2e: lsz --version prints the current build version" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+
+    const result = try std.process.run(alloc, io, .{
+        .argv = &.{ "zig-out/bin/lsz", "--version" },
+    });
+
+    defer alloc.free(result.stdout);
+    defer alloc.free(result.stderr);
+
+    const expected = try std.fmt.allocPrint(alloc, "{s}\n", .{build_config.program_version});
+    defer alloc.free(expected);
+
+    try std.testing.expectEqualStrings(expected, result.stdout);
+}
+
+test "e2e: lsz hides dotfiles by default, shows them with --all" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+
+    try temp.dir.writeFile(io, .{ .data = "", .sub_path = "visible.txt" });
+    try temp.dir.writeFile(io, .{ .data = "", .sub_path = ".hidden" });
+
+    const fixture_path = try temp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(fixture_path);
+
+    const without_all = try std.process.run(alloc, io, .{
+        .argv = &.{ "zig-out/bin/lsz", fixture_path, "--sort", "name" },
+    });
+
+    defer alloc.free(without_all.stdout);
+    defer alloc.free(without_all.stderr);
+
+    try std.testing.expect(std.mem.indexOf(u8, without_all.stdout, ".hidden") == null);
+    try std.testing.expect(std.mem.indexOf(u8, without_all.stdout, "visible.txt") != null);
+
+    const with_all = try std.process.run(alloc, io, .{
+        .argv = &.{ "zig-out/bin/lsz", fixture_path, "--sort", "name", "--all" },
+    });
+
+    defer alloc.free(with_all.stdout);
+    defer alloc.free(with_all.stderr);
+
+    try std.testing.expect(std.mem.indexOf(u8, with_all.stdout, ".hidden") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_all.stdout, "visible.txt") != null);
+}
+
+test "e2e: lsz exits with error for a nonexistent path" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+
+    const result = try std.process.run(alloc, io, .{
+        .argv = &.{ "zig-out/bin/lsz", "/does/not/exist/lsz-test" },
+    });
+
+    defer alloc.free(result.stdout);
+    defer alloc.free(result.stderr);
+
+    try std.testing.expectEqual(@as(u8, 1), result.term.exited);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "No such file or directory") != null);
+}
+
+test "e2e: lsz exits with error for an invalid --sort value" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+
+    const fixture_path = try temp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(fixture_path);
+
+    const result = try std.process.run(alloc, io, .{
+        .argv = &.{ "zig-out/bin/lsz", fixture_path, "--sort", "bogus" },
+    });
+
+    defer alloc.free(result.stdout);
+    defer alloc.free(result.stderr);
+
+    try std.testing.expectEqual(@as(u8, 1), result.term.exited);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "unsupported param value for sort") != null);
+}

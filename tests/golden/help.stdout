@@ -1,0 +1,27 @@
+Usage: lsz [PATH] [OPTIONS]
+
+A very minimal implementation of ls.
+
+Arguments:
+  PATH             Directory to list (default: current directory)
+
+Options:
+  -a, --all       List all files and do not ignore entries starting with .
+  -l, --list      Use a long listing format
+  -h, --human     Print a human readable format information. Will print sizes like 1K 234M 2G etc
+  -s, --sort      Sort the result in ascending order given the fields (name, size, created, modified, accessed)
+  -r, --reverse   Reverse the sorting result
+  -t, --timezone  Specify an IANA tz database timezone, e.g. Asia/Makassar. This only works if you pass (-l or --list) option
+  --output-type   Specify the output format (csv or tsv)
+  -v, --version   Print lsz version
+  --help          Show this help message
+
+Examples:
+  lsz
+  lsz -a
+  lsz -l
+  lsz /path -l -a
+  lsz /path -la --sort name
+  lsz /path -lar --sort created
+  lsz /path -lah -t Asia/Makassar
+  TZ=Asia/Makassar lsz /path -lah
