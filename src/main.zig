@@ -23,6 +23,7 @@ const help_text =
     \\  -h, --human     Print a human readable format information. Will print sizes like 1K 234M 2G etc
     \\  -s, --sort      Sort the result in ascending order given the fields (name, size, created, modified, accessed)
     \\  -r, --reverse   Reverse the sorting result
+    \\  -t, --timezone  Specify an IANA tz database timezone, e.g. Asia/Makassar. This only works if you pass (-l or --list) option
     \\  --help          Show this help message
     \\
     \\Examples:
@@ -32,6 +33,8 @@ const help_text =
     \\  lsz /path -l -a
     \\  lsz /path -la --sort name
     \\  lsz /path -lar --sort created
+    \\  lsz /path -lah -t Asia/Makassar
+    \\  TZ=Asia/Makassar lsz /path -lah
 ;
 
 const main_params = clap.parseParamsComptime(
@@ -41,6 +44,7 @@ const main_params = clap.parseParamsComptime(
     \\-h, --human           Print a human readable format information. Will print sizes like 1K 234M 2G etc
     \\-s, --sort <str>      Sort the result in ascending order given the fields: name, size, created, modified, accessed
     \\-r, --reverse         Reverse the sorting result
+    \\-t, --timezone <str>  Specify an IANA tz database timezone, e.g. Asia/Makassar. This only works if you pass (-l or --list) option
     \\<str>
     \\
 );
@@ -64,6 +68,10 @@ pub fn main(init: std.process.Init) !void {
         std.log.warn("failed to create iterate allocator: {}\n", .{err});
         return err;
     };
+
+    var tzdb = tempora.TZDB.init(init);
+    defer tzdb.deinit();
+    try tzdb.add(init.io, tempora.tz.all, .system(init.environ_map));
 
     defer iter.deinit();
 
@@ -134,7 +142,14 @@ pub fn main(init: std.process.Init) !void {
     show_long_list_format = res.args.list == 1;
     show_human_readable = res.args.human == 1;
 
-    run(allocator, io, &stdout_impl.interface, path) catch |err| switch (err) {
+    var tz: tempora.Timezone = tempora.Timezone.utc;
+    const tz_str: []const u8 = if (res.args.timezone) |t| t else if (init.environ_map.get("TZ")) |t| t else "";
+
+    if (tzdb.timezone(tz_str)) |t| {
+        tz = t.*;
+    }
+
+    run(allocator, io, &stdout_impl.interface, path, tz) catch |err| switch (err) {
         error.FileNotFound => {
             stderr.print("No such file or directory: {s}\n", .{path}) catch {};
             stderr.flush() catch {};
@@ -144,7 +159,7 @@ pub fn main(init: std.process.Init) !void {
     };
 }
 
-fn run(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []const u8) !void {
+fn run(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []const u8, tz: tempora.Timezone) !void {
     const basename = std.fs.path.basename(path);
     const dirname = std.fs.path.dirname(path) orelse ".";
     const open_dir_options: std.Io.Dir.OpenOptions = .{ .iterate = true, .follow_symlinks = false };
@@ -188,7 +203,7 @@ fn run(alloc: std.mem.Allocator, io: std.Io, writer: *std.Io.Writer, path: []con
     }
 
     if (show_long_list_format) {
-        try listing.printLongListFormat(alloc, writer, entries, show_human_readable);
+        try listing.printLongListFormat(alloc, writer, entries, show_human_readable, tz);
     } else {
         try listing.printDefault(writer, entries);
     }

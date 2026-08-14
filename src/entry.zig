@@ -93,9 +93,7 @@ pub const Entry = struct {
     name: []const u8,
     target_link_name: ?[]const u8 = null,
 
-    pub fn toCells(self: @This(), alloc: std.mem.Allocator, human_readable: bool) ![][]const u8 {
-        const tz = tempora.Timezone.utc;
-
+    pub fn toCells(self: @This(), alloc: std.mem.Allocator, human_readable: bool, tz: tempora.Timezone) ![][]const u8 {
         const fields = std.EnumArray(EntryField, []const u8).init(.{
             .permission = try self.renderMode(alloc),
             .size = try self.renderSize(alloc, human_readable),

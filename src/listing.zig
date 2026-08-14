@@ -1,6 +1,7 @@
 const std = @import("std");
 const entry = @import("entry.zig");
 const table = @import("table.zig");
+const tempora = @import("tempora");
 
 pub fn printDefault(writer: *std.Io.Writer, entries: std.ArrayList(entry.Entry)) !void {
     for (entries.items, 0..) |e, index| {
@@ -16,7 +17,7 @@ pub fn printDefault(writer: *std.Io.Writer, entries: std.ArrayList(entry.Entry))
     try writer.flush();
 }
 
-pub fn printLongListFormat(alloc: std.mem.Allocator, writer: *std.Io.Writer, entries: std.ArrayList(entry.Entry), human_readable: bool) !void {
+pub fn printLongListFormat(alloc: std.mem.Allocator, writer: *std.Io.Writer, entries: std.ArrayList(entry.Entry), human_readable: bool, tz: tempora.Timezone) !void {
     var columns = std.EnumArray(entry.EntryField, table.Column).init(.{
         .permission = .init("Permission", table.Align.left),
         .size = .init("Size", table.Align.right),
@@ -30,7 +31,7 @@ pub fn printLongListFormat(alloc: std.mem.Allocator, writer: *std.Io.Writer, ent
     var rows: std.ArrayList([][]const u8) = .empty;
 
     for (entries.items) |e| {
-        const cells = try e.toCells(alloc, human_readable);
+        const cells = try e.toCells(alloc, human_readable, tz);
 
         try rows.append(alloc, cells);
     }
@@ -110,7 +111,7 @@ test "printLongListFormat: render header and rows through the real table + entry
     var buf: [2048]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
 
-    try printLongListFormat(a_aloc, &w, entries, false);
+    try printLongListFormat(a_aloc, &w, entries, false, tempora.Timezone.utc);
 
     const output = w.buffered();
 
