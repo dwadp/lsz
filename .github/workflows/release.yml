@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-linux-musl
+            os_label: linux
+            arch_label: x86_64
+          - target: aarch64-linux-musl
+            os_label: linux
+            arch_label: arm64
+          - target: x86_64-macos
+            os_label: macos
+            arch_label: x86_64
+          - target: aarch64-macos
+            os_label: macos
+            arch_label: arm64
+
+    steps:
+      - name: Checkout repository code
+        uses: actions/checkout@v4
+
+      - name: Set up zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Get Version
+        id: get_version
+        run: |
+          VERSION=${{ github.ref_name }}
+          VERSION=${VERSION#v}
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Cross Compile
+        run: |
+          zig build \
+            -Dtarget=${{ matrix.target }} \
+            -Doptimize=ReleaseSafe \
+            --prefix out/${{ matrix.target }}
+
+      - name: Package Artifact
+        id: package_artifact
+        run: |
+          VERSION=${{ steps.get_version.outputs.version }}
+          PKG=lsz-${VERSION}-${{ matrix.os_label }}-${{ matrix.arch_label }}
+          mkdir -p "$PKG"
+          cp out/${{ matrix.target }}/bin/lsz "$PKG/"
+          cp README.md "$PKG/"
+          tar -czf "$PKG.tar.gz" "$PKG"
+          sha256sum "$PKG.tar.gz" > "$PKG.tar.gz.sha256"
+
+          echo "pkg_name=$PKG" >> "$GITHUB_OUTPUT"
+          echo "pkg_name_sha256=$PKG.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: lsz-${{ matrix.os_label }}-${{ matrix.arch_label }}
+          archive: false
+          path: |
+            lsz-*.tar.gz
+            lsz-*.tar.gz.sha256
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: lsz-${{ matrix.os_label }}-${{ matrix.arch_label }}
+
+      - name: Release
+        uses: softprops/action-gh-release@v3
+        if: github.ref_type == 'tag'
+        with:
+          files: lsz-*/**
